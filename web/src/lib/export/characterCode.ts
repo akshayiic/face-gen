@@ -25,6 +25,10 @@ export interface CharacterFile {
   addons: Record<string, string>; // eyebrows, eyelashes, facialHair, glasses, facialHairColour
   skin: string;
   eyes: string;
+  /** lib/clothes.ts ClothesState; missing in links made before clothes (no clothes). */
+  clothes?: Record<string, unknown>;
+  /** lib/skinDetails.ts SkinDetails (blush, freckles, moles, pores); missing in older links (none). */
+  skinDetails?: Record<string, unknown>;
 }
 
 /** Longest link payload we'll read: a full random face is ~1.5 KB, so anything far larger isn't ours. */
@@ -42,14 +46,19 @@ export function decodeCharacter(code: string): CharacterFile | null {
   if (!code || code.length > MAX_CODE || !/^[A-Za-z0-9_-]+$/.test(code)) return null;
   try {
     const bin = atob(code.replace(/-/g, "+").replace(/_/g, "/"));
-    const c = JSON.parse(new TextDecoder().decode(Uint8Array.from(bin, (ch) => ch.charCodeAt(0)))) as CharacterFile;
-    if (c?.format !== CHARACTER_FORMAT || typeof c.version !== "number" || c.version > CHARACTER_VERSION) return null;
-    const isObject = (v: unknown) => !!v && typeof v === "object" && !Array.isArray(v);
-    if (!isObject(c.shape) || !isObject(c.pose) || !isObject(c.hair) || !isObject(c.addons)) return null;
-    return c;
+    return checkCharacter(JSON.parse(new TextDecoder().decode(Uint8Array.from(bin, (ch) => ch.charCodeAt(0)))));
   } catch {
     return null;
   }
+}
+
+/** A parsed character (a link's, character.json's or a config file's), or null if it isn't one we can read. */
+export function checkCharacter(raw: unknown): CharacterFile | null {
+  const c = raw as CharacterFile | null;
+  if (!c || typeof c !== "object" || c.format !== CHARACTER_FORMAT || typeof c.version !== "number" || c.version > CHARACTER_VERSION) return null;
+  const isObject = (v: unknown) => !!v && typeof v === "object" && !Array.isArray(v);
+  if (!isObject(c.shape) || !isObject(c.pose) || !isObject(c.hair) || !isObject(c.addons)) return null;
+  return c;
 }
 
 /**
@@ -64,5 +73,7 @@ export function storageEntries(c: CharacterFile): Record<string, string> {
     [STORAGE_KEYS.addons]: JSON.stringify(c.addons),
     [STORAGE_KEYS.skin]: String(c.skin),
     [STORAGE_KEYS.eyes]: String(c.eyes),
+    [STORAGE_KEYS.clothes]: JSON.stringify(c.clothes && typeof c.clothes === "object" ? c.clothes : { style: "none" }),
+    [STORAGE_KEYS.skinDetails]: JSON.stringify(c.skinDetails && typeof c.skinDetails === "object" ? c.skinDetails : {}),
   };
 }

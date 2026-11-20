@@ -27,6 +27,7 @@ import {
 } from "three";
 
 import { GROOM, type GroomDef } from "@/lib/groom";
+import { hairTexturePixels } from "@/lib/surfaceTextures";
 
 import { PORTRAIT } from "./portrait";
 
@@ -48,6 +49,8 @@ const hash = (n: number) => {
   const x = Math.sin(n) * 43758.5453123;
   return x - Math.floor(x);
 };
+
+const srgbToLinear = (c: number) => (c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4);
 
 const data = (t: { value: DataTexture | null }) => (t.value?.image.data ?? null) as Float32Array | null;
 
@@ -77,6 +80,16 @@ export function strandMeshes(groom: Mesh, m: Matrix4, mode: StrandMode, name: st
   // colours: raw sRGB uniforms → linear (glTF vertex colours are linear)
   const rootC = new Color().copy(u.uHairShadow.value).convertSRGBToLinear();
   const tipC = new Color().copy(u.uHairHighlight.value).convertSRGBToLinear();
+  // an uploaded hair texture (scalp hair only): the column the shader's vRand picks, root to tip (groomShader.ts)
+  const texAmt = (u.uHairTexAmt?.value as number | undefined) ?? 0;
+  const tex = texAmt > 0 ? hairTexturePixels()?.image : undefined;
+  const texel = (x: number, t: number, out: number[]) => {
+    const { width: w, height: h, data: px } = tex!;
+    const i = (Math.min(h - 1, Math.floor(t * h)) * w + Math.min(w - 1, Math.floor(x * w))) * 4;
+    for (let j = 0; j < 3; j++) out[j] = srgbToLinear(px[i + j] / 255);
+    return out;
+  };
+  const texC = [0, 0, 0];
   const jitter = u.uJitter.value as number, shadowFloor = u.uShadowFloor.value as number, rampAmount = u.uRampAmount.value as number;
 
   const out: Mesh[] = [];
@@ -154,7 +167,12 @@ export function strandMeshes(groom: Mesh, m: Matrix4, mode: StrandMode, name: st
         const ramp = Math.min(1, Math.hypot(pos[i * 4] - raw0.x, pos[i * 4 + 1] - raw0.y, pos[i * 4 + 2] - raw0.z) / rampLen);
         const mix = Math.pow(ramp, 0.8) * rampAmount;
         const shade = (shadowFloor + (1 - shadowFloor) * pos[i * 4 + 3]) * shadeJitter;
-        const rgb = [rootC.r + (tipC.r - rootC.r) * mix, rootC.g + (tipC.g - rootC.g) * mix, rootC.b + (tipC.b - rootC.b) * mix].map((x) => x * shade);
+        let rgb = [rootC.r + (tipC.r - rootC.r) * mix, rootC.g + (tipC.g - rootC.g) * mix, rootC.b + (tipC.b - rootC.b) * mix];
+        if (tex) {
+          texel(hash(id + 11), t, texC);
+          rgb = rgb.map((x, j) => x + (texC[j] - x) * texAmt);
+        }
+        rgb = rgb.map((x) => x * shade);
         for (const sign of [-1, 1]) {
           const at = chunk.count++;
           chunk.pos[at * 3] = v.x + side.x * sign;

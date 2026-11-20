@@ -85,8 +85,8 @@ export const CHARACTER = {
     { chance: 0.2, from: 1.5, to: 2 },
     { chance: 0.1, from: 2, to: 2.25 },
   ],
-  /** From this skin tone on (index in SKIN_TONES, 0 = lightest), eyes are brown most of the time. */
-  darkSkinFrom: 5,
+  /** From this skin tone on (lightest first in SKIN_TONES), eyes are brown most of the time. */
+  darkSkinFrom: "bronze" as string,
   brownEyes: 0.9,
 };
 
@@ -131,7 +131,7 @@ function rollStyle(): Style {
   // Colouring: eye colour leans on skin tone.
   const tone = Math.floor(Math.random() * SKIN_TONES.length);
   const browns = EYE_COLOURS.filter((c) => c.id.includes("brown"));
-  const eyes = (tone >= CHARACTER.darkSkinFrom && chance(CHARACTER.brownEyes) ? pick(browns) : pick(EYE_COLOURS)).id;
+  const eyes = (tone >= SKIN_TONES.findIndex((t) => t.id === CHARACTER.darkSkinFrom) && chance(CHARACTER.brownEyes) ? pick(browns) : pick(EYE_COLOURS)).id;
   const colour = pickWeighted(CHARACTER.hairColours);
   // Brows and lashes always; beard and glasses by chance. The beard wears the hair colour.
   return {

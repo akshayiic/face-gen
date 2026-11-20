@@ -49,6 +49,7 @@ import {
 
 import { manifest } from "@/lib/data";
 import { eyeUniforms } from "@/lib/eyeShader";
+import { registerHairShadow } from "@/lib/hairShadow";
 import { morphs } from "@/lib/morphs/store";
 import type { StrandColours } from "@/lib/hair";
 import { onTier, quality } from "@/lib/quality";
@@ -319,6 +320,8 @@ export async function buildGroom(
   material.uniforms.uEyeR = eyeUniforms.uEyeR;
   material.uniforms.uHairShadow = colours.uniforms.uHairShadow;
   material.uniforms.uHairHighlight = colours.uniforms.uHairHighlight;
+  material.uniforms.uHairTex = colours.uniforms.uHairTex;
+  material.uniforms.uHairTexAmt = colours.uniforms.uHairTexAmt;
   material.name = "groom";
   installStrandMorph(material, "vec4 mv = modelViewMatrix * vec4(pos, 1.0);"); // grows out of the loader's bubble (lib/morphShader.ts)
 
@@ -371,7 +374,12 @@ export async function buildGroom(
   group.add(mesh);
   // While this groom is on the head, the scalp under it takes the hair's root colour (lib/skinShader.ts).
   if (tintScalp) scalpTint(group, roots, reach, colours.uniforms.uHairShadow.value);
+  // Head hair and beards shade the skin and clothes (lib/hairShadow.ts); brows and lashes are too fine to.
+  const casts = tintScalp || (!soft && !fine && !shapeFollow);
+  const ribbon = tierCount(def);
+  const unshadow = casts ? registerHairShadow(group, { positions, n, p, width: def.widthMm * ribbon.widthScale * (1 + ribbon.children) }) : () => {};
   group.userData.dispose = () => {
+    unshadow();
     lid.tex.dispose();
     shapePts.tex.dispose();
     offTier();

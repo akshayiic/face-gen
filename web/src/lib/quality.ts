@@ -6,13 +6,16 @@
  * Order of sacrifice on a slow device: detail normals first, then texture sizes (the low
  * tier downloads the @512 maps), and last the canvas resolution (Scene.tsx). No tier uses screen-space AO (three's
  * GTAOPass): it shows no visible gain over the baked AO, and its post chain washes the picture out.
+ *
+ * The realism features by tier: the key light's shadow map (size in texels, 0 = off), hair shadows on the skin and
+ * clothes (lib/hairShadow.ts), and the camera finish (lib/finish.ts) with its depth-of-field taps.
  */
 export type Tier = "high" | "medium" | "low";
 
 export const TIERS = {
-  high: { detailNormals: true, textureSize: 1024 },
-  medium: { detailNormals: true, textureSize: 1024 },
-  low: { detailNormals: false, textureSize: 512 },
+  high: { detailNormals: true, textureSize: 1024, shadowMap: 2048, hairShadow: true, finish: true, dofTaps: 24 },
+  medium: { detailNormals: true, textureSize: 1024, shadowMap: 1024, hairShadow: true, finish: true, dofTaps: 12 },
+  low: { detailNormals: false, textureSize: 512, shadowMap: 0, hairShadow: false, finish: false, dofTaps: 0 },
 } as const;
 
 const ORDER: Tier[] = ["low", "medium", "high"];

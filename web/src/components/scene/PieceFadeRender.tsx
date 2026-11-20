@@ -1,7 +1,8 @@
 "use client";
 
 /**
- * The render loop (priority 1, so R3F's own render is off). Normally one render, exactly what R3F would do.
+ * The render loop (priority 1, so R3F's own render is off). Normally one render, exactly what R3F would do, through the
+ * camera finish when it is on (lib/finish.ts renderView: depth of field, bloom, grade, grain).
  * While lib/pieceFade.ts has a batch, the leaving pieces live on layer 1 and the arriving ones on layer 2:
  *   - collecting (files still arriving): render the "before" image only (layers 0 + 1), the new pieces stay hidden;
  *   - running: render "before", copy the finished frame, render "after" (layers 0 + 2), then draw the copy over it at
@@ -11,6 +12,7 @@
 import { useFrame } from "@react-three/fiber";
 import { Camera, FramebufferTexture, Mesh, type Object3D, PlaneGeometry, Scene, ShaderMaterial, Vector2 } from "three";
 
+import { renderView } from "@/lib/finish";
 import { pieceFade, pieceNodes } from "@/lib/pieceFade";
 import { applySkinPieces } from "@/lib/skinShader";
 
@@ -50,7 +52,7 @@ export function PieceFadeRender() {
         overlay.frame.dispose(); // a screen-sized copy (~10 MB of GPU memory): the next fade makes a new one
         overlay.frame = null;
       }
-      gl.render(scene, camera);
+      renderView(gl, scene, camera);
       return;
     }
     onLayer(leaving.map((l) => l.node), LEAVING); // every frame: cheap, and catches pieces that joined since
@@ -60,7 +62,7 @@ export function PieceFadeRender() {
     camera.layers.set(0);
     camera.layers.enable(LEAVING);
     const live = skinBefore && applySkinPieces(skinBefore);
-    gl.render(scene, camera); // before
+    renderView(gl, scene, camera); // before
     if (live) applySkinPieces(live);
     if (running && t > 0) {
       overlay ??= makeOverlay();
@@ -73,7 +75,7 @@ export function PieceFadeRender() {
       gl.copyFramebufferToTexture(overlay.frame);
       camera.layers.set(0);
       camera.layers.enable(ARRIVING);
-      gl.render(scene, camera); // after
+      renderView(gl, scene, camera); // after
       overlay.material.uniforms.uOpacity.value = 1 - t;
       const autoClear = gl.autoClear;
       gl.autoClear = false;

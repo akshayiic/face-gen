@@ -7,14 +7,21 @@
  */
 import type { Camera, Mesh, MeshStandardMaterial, Object3D, Scene, Texture, WebGLRenderer } from "three";
 
-export const sceneRig = { gl: null as WebGLRenderer | null, scene: null as Scene | null, camera: null as Camera | null };
+export const sceneRig = {
+  gl: null as WebGLRenderer | null,
+  scene: null as Scene | null,
+  camera: null as Camera | null,
+  /** Draws one frame as the visitor sees it (with the camera finish, lib/finish.ts); set with the rest. */
+  draw: null as (() => void) | null,
+};
 
 /** JPEG data URL of the current view, long edge `size` px (Claude bills ~ (w/28)·(h/28) tokens). */
 export function captureFace(size = 768, quality = 0.85): string {
   const { gl, scene, camera } = sceneRig;
   if (!gl || !scene || !camera) throw new Error("scene not ready");
   // The picture shows the character as the visitor styled it (hair and every add-on included).
-  gl.render(scene, camera);
+  if (sceneRig.draw) sceneRig.draw();
+  else gl.render(scene, camera);
   const src = gl.domElement;
   const scale = size / Math.max(src.width, src.height);
   const out = document.createElement("canvas");

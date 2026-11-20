@@ -8,10 +8,12 @@
  * working, not unavailable): the clicked one shows the spinner, and neither takes a second click (BusyPill).
  * Then a screen reader hears the new face in words. The first character's hair and add-ons download a few
  * seconds after the page loads (prepareFirst), and pointing at or focusing Random character starts them too.
- * Random face alone lives in the Shape tab.
+ * Random face alone lives in the Shape tab. Export .glb and Config (save or load the setup as a .md file) sit beside them.
  */
 import { useEffect, useId, useState } from "react";
 
+import { ConfigMenu } from "@/components/ui/ConfigMenu";
+import { ModelExportButton } from "@/components/ui/ModelExportButton";
 import { BusyPill } from "@/components/ui/Spinner";
 import { Status } from "@/components/ui/Status";
 import { characterSettled, prepareFirst, prepareNext, randomCharacter, resetCharacter } from "@/lib/character";
@@ -46,6 +48,8 @@ export function Toolbar() {
       <BusyPill className="pill-secondary h-9" busy={busy === "reset"} held={!!busy} onClick={() => run("reset", resetCharacter)} data-tip={TIPS.reset} aria-describedby={`${ids}-reset`}>
         Reset
       </BusyPill>
+      <ModelExportButton held={!!busy} />
+      <ConfigMenu held={!!busy} />
       {/* the hints for screen readers (the tooltip, TooltipLayer, is visual only) */}
       <span id={`${ids}-random`} className="sr-only">
         {TIPS.random}

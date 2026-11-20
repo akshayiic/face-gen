@@ -121,6 +121,8 @@ export const FRAGMENT = /* glsl */ `
 #include <lights_pars_begin>
 uniform vec3 uHairShadow; // root colour, raw sRGB (lib/hair.ts strandColours)
 uniform vec3 uHairHighlight; // tip colour, raw sRGB
+uniform sampler2D uHairTex; // an uploaded hair texture (lib/surfaceTextures.ts): roots at the top, tips at the bottom …
+uniform float uHairTexAmt; // … and how much it counts (0: none)
 uniform vec3 uSky;
 uniform vec3 uGround;
 uniform vec3 uUpView;
@@ -142,7 +144,10 @@ float kk(vec3 T, vec3 H, float e) {
 void main() {
   vec3 rootC = sRGBTransferEOTF(vec4(uHairShadow, 1.0)).rgb;
   vec3 tipC = sRGBTransferEOTF(vec4(uHairHighlight, 1.0)).rgb;
-  vec3 albedo = mix(rootC, tipC, pow(vRamp, 0.8) * uRampAmount) * (1.0 + (vRand - 0.5) * uJitter);
+  vec3 albedo = mix(rootC, tipC, pow(vRamp, 0.8) * uRampAmount);
+  // each strand (and child) one column of the texture, root to tip along its length (lib/export/strands.ts samples the same)
+  if (uHairTexAmt > 0.0) albedo = mix(albedo, texture2D(uHairTex, vec2(vRand, vT)).rgb, uHairTexAmt);
+  albedo *= 1.0 + (vRand - 0.5) * uJitter;
   vec3 T = normalize(vTan);
   vec3 V = normalize(-vViewPos);
   vec3 N = normalize(V - T * dot(V, T));

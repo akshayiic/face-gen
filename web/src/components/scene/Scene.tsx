@@ -2,13 +2,15 @@
 
 /**
  * The R3F canvas. Cheap by construction: capped DPR that PerformanceMonitor lowers on slow
- * devices, MSAA on, no shadow maps, environment lighting, one head. Only `dpr` is React state.
+ * devices, MSAA on, one shadow map (the key light, medium and high tiers), environment lighting, one head, and a camera
+ * finish over the frame (lib/finish.ts, drawn by PieceFadeRender). Only `dpr` is React state.
  */
 import { OrbitControls, PerformanceMonitor } from "@react-three/drei";
 import { Canvas, useThree } from "@react-three/fiber";
 import { Suspense, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
 import { ACESFilmicToneMapping, type Object3D, type PerspectiveCamera } from "three";
 
+import { clothesSnapshot, onClothesChange } from "@/lib/clothes";
 import { registerView } from "@/lib/debugView";
 import { revealedSnapshot, subscribeRevealed } from "@/lib/headLoad";
 import { dropTier, probeTier } from "@/lib/quality";
@@ -31,6 +33,8 @@ const CAMERA = {
   target: [0, 0.265, 0.05] as [number, number, number],
   /** Portrait canvases (phones) look this much higher, so tall hair keeps headroom. */
   portraitLift: 0.02,
+  /** With clothes on (lib/clothes.ts): further back and lower, head and shoulders in frame. */
+  wide: { position: [0, 0.2026, 1.711] as [number, number, number], target: [0, 0.195, 0.05] as [number, number, number] },
 };
 
 const MAX_DPR = 1.5;
@@ -54,16 +58,18 @@ function Controls() {
   const controls = useThree((s) => s.controls);
   const revealed = useSyncExternalStore(subscribeRevealed, revealedSnapshot, () => false);
   const lift = height > width ? CAMERA.portraitLift : 0;
+  const wide = useSyncExternalStore(onClothesChange, () => clothesSnapshot().style !== "none", () => false);
+  const view = wide ? CAMERA.wide : CAMERA;
   useEffect(() => {
-    camera.position.set(CAMERA.position[0], CAMERA.position[1] + lift, CAMERA.position[2]);
-  }, [camera, lift]);
+    camera.position.set(view.position[0], view.position[1] + lift, view.position[2]);
+  }, [camera, lift, view]);
   // Debug-only: __faceToVoice.view(...) moves this camera for comparison screenshots.
   useEffect(() => registerView(camera as PerspectiveCamera, controls as Parameters<typeof registerView>[1]), [camera, controls]);
   return (
     <OrbitControls
       makeDefault
       enableRotate={revealed}
-      target={[CAMERA.target[0], CAMERA.target[1] + lift, CAMERA.target[2]]}
+      target={[view.target[0], view.target[1] + lift, view.target[2]]}
       enablePan={false}
       enableZoom={false}
       enableDamping
@@ -122,7 +128,7 @@ export default function Scene() {
       dpr={dpr}
       camera={{ fov: CAMERA.fov, position: CAMERA.position, near: 0.1, far: 5 }}
       gl={{ antialias: true, alpha: false, stencil: false, powerPreference: "high-performance", toneMapping: ACESFilmicToneMapping }} // Lighting.tsx owns tone mapping + exposure
-      shadows={false}
+      shadows="percentage" // PCF (soft, Vogel-disc taps): only the key light casts, on the medium and high tiers (Lighting.tsx)
       onCreated={({ gl }) => {
         // A context the browser doesn't give back (GPU reset, too many contexts on a phone) leaves
         // a blank card: say so.

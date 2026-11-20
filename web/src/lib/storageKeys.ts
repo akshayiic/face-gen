@@ -3,4 +3,12 @@
  * link (lib/export/characterCode.ts) writes the same entries, so each name is written once, here. No imports: the
  * link is read before anything else restores.
  */
-export const STORAGE_KEYS = { face: "ftv-face", pose: "ftv-pose", hair: "ftv-hair", addons: "ftv-addons", skin: "ftv-skin", eyes: "ftv-eyes" } as const;
+export const STORAGE_KEYS = { face: "ftv-face", pose: "ftv-pose", hair: "ftv-hair", addons: "ftv-addons", skin: "ftv-skin", eyes: "ftv-eyes", clothes: "ftv-clothes", skinDetails: "ftv-skin-details" } as const;
+
+/**
+ * Uploaded textures (lib/surfaceTextures.ts): this tab only, never in a rebuild link (an image is far too big for one).
+ */
+export const TEXTURE_KEYS = { skin: "ftv-skin-texture", hair: "ftv-hair-texture" } as const;
+
+/** The camera finish (lib/finishSettings.ts): how the view is drawn, not part of the character or its link. */
+export const VIEW_KEYS = { finish: "ftv-finish" } as const;

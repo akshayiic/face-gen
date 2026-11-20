@@ -38,6 +38,8 @@ import { morphs } from "@/lib/morphs/store";
 import { perf } from "@/lib/perf";
 import { characterSettled } from "@/lib/character";
 import { quality, setTier } from "@/lib/quality";
+import { finishSettings, setFinish } from "@/lib/finishSettings";
+import { apply as applyHairShadow, HAIR_SHADOW, hairShadowUniforms } from "@/lib/hairShadow";
 import { pieceFade } from "@/lib/pieceFade";
 import { setSkinTone, skinRig } from "@/lib/skin";
 
@@ -112,6 +114,9 @@ if (debugHandle) {
     // code in the first load)
     lighting: () => import("@/components/scene/Lighting").then((m) => ({ LIGHTING: m.LIGHTING, rig: m.lightingRig })),
     quality: { state: quality, set: setTier },
+    // the camera finish (lib/finish.ts FINISH loads with the canvas) and the hair's shadow on the skin
+    finish: { settings: finishSettings, set: setFinish, FINISH: () => import("@/lib/finish").then((m) => m.FINISH) },
+    hairShadow: { HAIR_SHADOW, uniforms: hairShadowUniforms, apply: applyHairShadow },
     view,
     still: (on: boolean) => void (idleDebug.still = on),
     captureFace,

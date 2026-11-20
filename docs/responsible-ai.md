@@ -6,8 +6,13 @@ and how that is enforced.
 
 ## Synthetic faces only
 
-- The head is generated from Google's GNM model and shaped with sliders. The app has no photo upload and no camera:
-  the image Claude sees is a screenshot of the 3D canvas, taken in the browser when the visitor asks for a voice.
+- The head is generated from Google's GNM model and shaped with sliders. The app has no camera and no face-photo
+  upload: the image Claude sees is a screenshot of the 3D canvas, taken in the browser when the visitor asks for a voice.
+- Material textures (Style tab: a skin texture and a hair texture) can be uploaded. They are surface materials laid
+  over the synthetic head (a tiled skin swatch, a map painted in the head's own UV layout, a hair swatch), never a face
+  fitted from a photo. The image is read and kept in the browser tab only (sessionStorage); it is never sent to the
+  server and never part of a rebuild link. Like hair and skin tone, it shows in the screenshot, so the same brief
+  applies to it.
 - The casting brief tells Claude that the image is a synthetic head, not a photograph, and that it must **never name or
   guess a real person** or write a real person's name in any field. A real name in the voice description would make
   Voice Design imitate that person, and guessing identities from faces is face recognition; neither has a place here.

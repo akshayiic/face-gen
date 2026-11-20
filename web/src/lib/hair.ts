@@ -12,7 +12,7 @@
  * is part of the character: it is in the screenshot sent to Claude and in the cache key (lib/look.ts).
  */
 import gsap from "gsap";
-import { Color, type Group, LinearSRGBColorSpace, type Mesh, type MeshPhysicalMaterial, type Object3D } from "three";
+import { Color, type Group, LinearSRGBColorSpace, type Mesh, type MeshPhysicalMaterial, type Object3D, type Texture } from "three";
 
 import hairBlob from "@/data/hairBlob.json";
 import { hairIndex, MODELS_BASE, type HairStyleDef } from "@/lib/data";
@@ -21,6 +21,7 @@ import { partDone, prefetchPart, takePrefetched } from "@/lib/headLoad";
 import { MOTION } from "@/lib/motion";
 import { finishPieceFade, pieceFade, swapPiece } from "@/lib/pieceFade";
 import { STORAGE_KEYS } from "@/lib/storageKeys";
+import { hairTextureUniforms, onTextureChange } from "@/lib/surfaceTextures";
 import { HAIR_COLOURS, NATURAL_HAIR } from "@/lib/swatches";
 
 /** "none" or a style id from hair/index.json ("haircs-v0-00681", "bystedt-long", …). */
@@ -161,6 +162,9 @@ export const strandColours = () => ({
   uniforms: {
     uHairShadow: { value: new Color() },
     uHairHighlight: { value: new Color() },
+    // an uploaded hair texture (lib/surfaceTextures.ts): the scalp hair's set only; add-ons keep none
+    uHairTex: { value: null as Texture | null },
+    uHairTexAmt: { value: 0 },
   },
 });
 export type StrandColours = ReturnType<typeof strandColours>;
@@ -230,7 +234,17 @@ function applyHair(seconds = 0): void {
   const ramp = rampOf(colour) ?? (style?.strands ? { shadow: style.strands.root, highlight: style.strands.tip } : null);
   if (seconds > 0) blendStrands(colours, seconds, ramp);
   else tintStrands(colours, ramp);
+  applyHairTexture(colours);
 }
+
+/** The uploaded hair texture onto a colour set (lib/surfaceTextures.ts); its changes reach the style on the head. */
+function applyHairTexture(colours: StrandColours | undefined): void {
+  if (!colours) return;
+  const tex = hairTextureUniforms();
+  colours.uniforms.uHairTex.value = tex.texture;
+  colours.uniforms.uHairTexAmt.value = tex.amount;
+}
+if (typeof window !== "undefined") onTextureChange(() => applyHairTexture(hairRig.mesh?.userData.colours as StrandColours | undefined));
 
 /** A painted colour as Natural renders it: HAIR_MATERIAL.natural.saturation applied (toward its own grey, in sRGB). */
 export function naturalHex(hex: string): string {

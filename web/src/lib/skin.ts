@@ -25,7 +25,7 @@ const SHEEN_LIFT = 0.6;
 export const skinRig = { material: null as MeshPhysicalMaterial | null };
 export const skinState: { tone: SkinToneId } = { tone: SKIN_DEFAULT };
 
-const tone = () => SKIN_TONES.find((t) => t.id === skinState.tone) ?? SKIN_TONES[3];
+const tone = () => SKIN_TONES.find((t) => t.id === skinState.tone) ?? SKIN_TONES.find((t) => t.id === SKIN_DEFAULT)!;
 const white = new Color("#ffffff");
 
 /** The colour the skin material is built with (scene/materials.ts). */

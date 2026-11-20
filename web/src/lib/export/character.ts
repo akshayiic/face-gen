@@ -3,6 +3,7 @@
  * sessionStorage (lib/faceSession.ts and friends), so opening the link (lib/export/openLink.ts) restores it exactly.
  */
 import { addonState } from "@/lib/addons";
+import { clothesState } from "@/lib/clothes";
 import { sliders } from "@/lib/data";
 import { emotionRig } from "@/lib/emotion";
 import { eyeState } from "@/lib/eyes";
@@ -10,6 +11,7 @@ import { hairState } from "@/lib/hair";
 import { morphs } from "@/lib/morphs/store";
 import { POSE_LIMITS, poseRig, type PoseKey } from "@/lib/pose";
 import { skinState } from "@/lib/skin";
+import { skinDetails } from "@/lib/skinDetails";
 
 import { CHARACTER_FORMAT, CHARACTER_VERSION, encodeCharacter, type CharacterFile } from "./characterCode";
 
@@ -36,6 +38,8 @@ export function currentCharacter(): CharacterFile {
     addons: { ...addonState },
     skin: skinState.tone,
     eyes: eyeState.colour,
+    clothes: { ...clothesState },
+    skinDetails: { ...skinDetails },
   };
 }
 

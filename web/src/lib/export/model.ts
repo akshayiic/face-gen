@@ -46,7 +46,13 @@ import { addonRig } from "@/lib/addons";
 import { characterSettled } from "@/lib/character";
 import { extraReady } from "@/lib/headExtra";
 
+import { clothesMaterialFor } from "@/lib/clothes";
+import { skinRig } from "@/lib/skin";
+import { skinUniforms } from "@/lib/skinShader";
+import { skinSurface } from "@/lib/skinSurface";
+
 import { holdStill } from "./portrait";
+import { applyShape, attachTargets, delta, normalsFor, placedPositions, RIG_SHAPES, type Target } from "./rig";
 import { shellMesh } from "./shells";
 import { strandMeshes, type StrandMode } from "./strands";
 
@@ -66,7 +72,7 @@ const SHADE: Record<string, string> = { mouth: MOUTH_SHADE, teeth: MOUTH_SHADE, 
  * The GLB's bytes. Waits for a Random character / Reset to land and for the semantic and emotion targets.
  * `strands`: the hair, brows, lashes and strand beards as guide ribbons, with their child strands too, or left out.
  */
-export async function buildModel({ strands = "children" }: { strands?: StrandMode | "none" } = {}): Promise<Uint8Array> {
+export async function buildModel({ strands = "children", rig = false }: { strands?: StrandMode | "none"; rig?: boolean } = {}): Promise<Uint8Array> {
   await characterSettled();
   await extraReady;
   const { gl, camera, scene } = sceneRig;
@@ -80,19 +86,23 @@ export async function buildModel({ strands = "children" }: { strands?: StrandMod
     sway.updateWorldMatrix(true, true);
     const toBust = new Matrix4().copy(sway.parent?.matrixWorld ?? new Matrix4()).invert(); // the bust's own space: the head pose stays in
     const glasses = addonRig.meshes.glasses;
+    // what goes in the file, in traversal order; each part's colour is baked once, the geometry can be built again
+    const items: Item[] = [];
     sway.traverseVisible((o) => {
       const mesh = o as Mesh;
       if (!mesh.isMesh) return;
       const matrix = new Matrix4().multiplyMatrices(toBust, mesh.matrixWorld);
       if ((mesh as InstancedMesh).isInstancedMesh) {
-        const shells = shellMesh(mesh as InstancedMesh, matrix); // a shell beard (the only instanced mesh on the head)
-        if (shells) root.add(shells);
+        items.push({ kind: "shell", mesh, matrix, name: "" }); // a shell beard (the only instanced mesh on the head)
         return;
       }
       if (mesh.userData.groom) {
         if (strands === "none") return;
-        mesh.onBeforeRender(gl, scene, camera, mesh.geometry, mesh.material as Material, null as unknown as Group); // roots onto the posed skin, as a frame would
-        for (const piece of strandMeshes(mesh, matrix, strands, mesh.parent?.name || "hair")) root.add(piece);
+        items.push({ kind: "groom", mesh, matrix, name: mesh.parent?.name || "hair" });
+        return;
+      }
+      if (mesh.userData.clothes) {
+        items.push({ kind: "part", mesh, matrix, material: clothesMaterialFor(mesh), name: mesh.name }); // lib/clothes.ts
         return;
       }
       const part = (mesh.parent?.name || mesh.name).replace(/_[LR]$/, "");
@@ -102,10 +112,26 @@ export async function buildModel({ strands = "children" }: { strands?: StrandMod
       else if (MODEL.size[part]) material = baked(gl, camera, mesh, part, side);
       else if (glasses && isInside(mesh, glasses)) material = glassesMaterial(materialOf(mesh));
       if (!material) return;
-      const out = new Mesh(bakeGeometry(mesh, matrix), material);
-      out.name = (mesh.parent?.name || mesh.name || part) + (material.name === "glasses_lens" ? "_lens" : "");
-      root.add(out);
+      items.push({ kind: "part", mesh, matrix, material, name: (mesh.parent?.name || mesh.name || part) + (material.name === "glasses_lens" ? "_lens" : "") });
     });
+
+    const build = (item: Item): Mesh[] => {
+      if (item.kind === "shell") {
+        const shells = shellMesh(item.mesh as InstancedMesh, item.matrix);
+        return shells ? [shells] : [];
+      }
+      if (item.kind === "groom") {
+        const mesh = item.mesh;
+        mesh.onBeforeRender(gl, scene, camera, mesh.geometry, mesh.material as Material, null as unknown as Group); // roots onto the posed skin, as a frame would
+        return strandMeshes(mesh, item.matrix, strands as StrandMode, item.name);
+      }
+      const out = new Mesh(bakeGeometry(item.mesh, item.matrix), item.material);
+      out.name = item.name;
+      return [out];
+    };
+    const built = items.map(build);
+    for (const meshes of built) for (const m of meshes) root.add(m);
+    if (rig) addRig(items, built, build);
   } finally {
     restore();
   }
@@ -123,6 +149,53 @@ export async function buildModel({ strands = "children" }: { strands?: StrandMod
       m.dispose();
     });
   }
+}
+
+/** One piece of the head in the file: a part (colour baked once), a shell beard or a groom (rebuilt from the skin). */
+type Item = { kind: "part" | "shell" | "groom"; mesh: Mesh; matrix: Matrix4; material?: Material; name: string };
+
+/**
+ * The mouth rig (lib/export/rig.ts): for each shape, put it on the face, build the geometry again and keep what moved as
+ * morph targets on the meshes already in the file. Scalp hair is not rebuilt (no mouth shape or blink reaches it).
+ * `built[i]` are item i's meshes in the file; a rebuild of the same item makes the same meshes in the same order.
+ */
+function addRig(items: Item[], built: Mesh[][], build: (item: Item) => Mesh[]): void {
+  const moves = (item: Item) => !(item.kind === "groom" && item.name === "hair") && !item.mesh.userData.clothes; // clothes sit below the jaw
+  const bases = built.map((meshes) => meshes.map(placedPositions));
+  const baseNormals = built.map((meshes, i) => meshes.map((m, j) => (items[i].kind === "part" && m.geometry.attributes.normal ? normalsFor(m.geometry, bases[i][j]) : null)));
+  const targets: Target[][][] = built.map((meshes) => meshes.map(() => []));
+  for (const shape of RIG_SHAPES) {
+    const undo = applyShape(shape);
+    try {
+      items.forEach((item, i) => {
+        if (!moves(item)) return;
+        const again = build(item);
+        try {
+          if (again.length !== built[i].length) return; // a different piece count: not comparable, leave it still
+          again.forEach((m, j) => {
+            const shaped = placedPositions(m);
+            const position = delta(bases[i][j], shaped);
+            if (!position) return;
+            const n0 = baseNormals[i][j];
+            const normal = n0 ? (delta(n0, normalsFor(built[i][j].geometry, shaped)) ?? new Float32Array(n0.length)) : undefined;
+            targets[i][j].push({ name: shape.name, position, normal });
+          });
+        } finally {
+          for (const m of again) {
+            m.geometry.dispose();
+            if (m.material !== item.material) {
+              const mat = m.material as MeshStandardMaterial;
+              mat.map?.dispose();
+              mat.dispose();
+            }
+          }
+        }
+      });
+    } finally {
+      undo();
+    }
+  }
+  built.forEach((meshes, i) => meshes.forEach((m, j) => attachTargets(m, bases[i][j], targets[i][j])));
 }
 
 /** A mesh's material; a shell beard makes the skin's a one-item list (lib/beardShells.ts). */
@@ -158,6 +231,8 @@ function bakeGeometry(mesh: Mesh, m: Matrix4): BufferGeometry {
     }
     out.setAttribute("uv", new Float32BufferAttribute(data, 2));
   }
+  const color = src.attributes.color as BufferAttribute | undefined; // the clothes' fold shading (lib/clothes.ts)
+  if (color) out.setAttribute("color", color.clone());
   if (src.index) {
     // only the mesh's own triangles: a shell beard appends copies of some after them (lib/beardShells.ts)
     const count = (src.userData.baseIndexCount as number | undefined) ?? src.index.count;
@@ -167,11 +242,30 @@ function bakeGeometry(mesh: Mesh, m: Matrix4): BufferGeometry {
   return out;
 }
 
+/** A part's texture size: the skin doubles when it carries fine detail (freckles, moles, an uploaded texture). */
+function sizeFor(part: string): number {
+  const u = skinUniforms;
+  const fine = u.uFreckles.value > 0 || u.uMoleCount.value > 0 || skinRig.material?.defines?.USE_SKIN_TEX !== undefined;
+  return MODEL.size[part] * (part === "skin" && fine ? 2 : 1);
+}
+
+/**
+ * The skin's colour in its UV layout, as the export bakes it (tone, redness, lips, age, freckles, moles, an uploaded
+ * texture): a starting point to paint on and upload again as a "painted map" skin texture. Top row = v 0 (glTF).
+ */
+export async function bakeSkinMap(size = 2048): Promise<HTMLCanvasElement> {
+  await characterSettled();
+  const { gl, camera } = sceneRig;
+  const mesh = skinSurface.mesh;
+  if (!gl || !camera || !mesh) throw new Error("scene not ready");
+  return bakeColour(gl, camera, mesh, size);
+}
+
 /** A head part with its colour baked from its own shader. */
 function baked(gl: WebGLRenderer, camera: Camera, mesh: Mesh, part: string, side: string): MeshStandardMaterial | null {
   const src = materialOf(mesh);
   if (!mesh.geometry.attributes.uv) return null;
-  const map = new CanvasTexture(bakeColour(gl, camera, mesh, MODEL.size[part], SHADE[part]));
+  const map = new CanvasTexture(bakeColour(gl, camera, mesh, sizeFor(part), SHADE[part]));
   map.flipY = false; // as glTF has it: the image's top row is v = 0, the row the bake wrote first
   map.colorSpace = SRGBColorSpace;
   map.userData.mimeType = "image/jpeg";

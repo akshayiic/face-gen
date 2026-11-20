@@ -5,8 +5,10 @@
  * panels and rendered once through PMREM: a big warm softbox front-left (the key), a dimmer card on the right (the
  * fill), two tall strips behind the head (the rims that outline the hair and jaw), a soft top light, and a warm floor
  * bounce, all in a dim room. Skin, eyes and hair pick up soft reflections of these shapes. Three directional lights
- * add crisp shape on top: key, fill and rim, matching the panels. No shadow maps (a render pass for one bust);
- * contact darkness comes from the baked AO (lib/skinShader.ts).
+ * add crisp shape on top: key, fill and rim, matching the panels. The key casts a soft shadow (one small shadow map on
+ * the medium and high tiers, lib/quality.ts): the nose on the cheek, the jaw on the neck, the lids on the eyes, the
+ * collar on the throat. Hair can't go into it (custom strands): lib/hairShadow.ts shades the skin under it. Contact
+ * darkness comes from the baked AO (lib/skinShader.ts).
  *
  * Tweak the numbers in LIGHTING. `__faceToVoice.lighting.rig.toneMapping("agx" | "aces" |
  * "neutral", exposure)` switches tone mapping live for comparisons.
@@ -32,6 +34,8 @@ import {
 } from "three";
 
 import { setCorneaEnvironment } from "@/lib/eyeShader";
+import { revealedSnapshot, subscribeRevealed } from "@/lib/headLoad";
+import { onTier, tierSettings } from "@/lib/quality";
 
 type V3 = [number, number, number];
 type Panel = { position: V3; size: [number, number]; color: string; intensity: number };
@@ -60,9 +64,37 @@ export const LIGHTING = {
   key: { position: [-1.3, 1.3, 2.0] as V3, intensity: 1.8, color: "#fff4ea" },
   fill: { position: [1.8, 0.3, 0.9] as V3, intensity: 0.3, color: "#e8ecf2" },
   rim: { position: [1.3, 1.4, -1.7] as V3, intensity: 1.6, color: "#eef3ff" },
+  /** The key's shadow: a square this big round the head (half its side, m), its depth range, how soft its edge is (mm,
+   * a big softbox) and the biases that keep the skin from shadowing itself. */
+  keyShadow: { half: 0.34, near: 1.4, far: 3.9, softMm: 2.5, bias: -0.0002, normalBias: 0.0012 },
   /** What the lights aim at (the middle of the face), so their direction does not depend on the origin. */
   target: [0, 0.27, 0.05] as V3,
 };
+
+/**
+ * The key's shadow map for the current tier (none on low), once the head is revealed: the loader's bubble morph moves
+ * vertices in the shader (lib/morphShader.ts), which the shadow's depth pass doesn't see.
+ */
+function applyKeyShadow(light: DirectionalLight): void {
+  const size = tierSettings().shadowMap;
+  light.castShadow = size > 0 && revealedSnapshot();
+  if (!size) return;
+  const s = LIGHTING.keyShadow;
+  const cam = light.shadow.camera;
+  cam.left = cam.bottom = -s.half;
+  cam.right = cam.top = s.half;
+  cam.near = s.near;
+  cam.far = s.far;
+  cam.updateProjectionMatrix();
+  if (light.shadow.mapSize.x !== size) {
+    light.shadow.mapSize.set(size, size);
+    light.shadow.map?.dispose();
+    light.shadow.map = null;
+  }
+  light.shadow.radius = s.softMm / 1000 / ((2 * s.half) / size); // in texels
+  light.shadow.bias = s.bias;
+  light.shadow.normalBias = s.normalBias;
+}
 
 export type ToneMappingName = "agx" | "aces" | "neutral";
 const TONE: Record<ToneMappingName, ToneMapping> = { agx: AgXToneMapping, aces: ACESFilmicToneMapping, neutral: NeutralToneMapping };
@@ -97,6 +129,7 @@ export const lightingRig = {
       light.intensity = LIGHTING[k].intensity;
       light.color.set(LIGHTING[k].color);
     }
+    if (lightingRig.lights.key) applyKeyShadow(lightingRig.lights.key);
   },
   rebuild(): void {
     lightingRig.rebuildStudio?.();
@@ -172,7 +205,13 @@ export function Lighting() {
       light.target.position.set(...LIGHTING.target);
       scene.add(light.target);
     }
+    const keyLight = key.current;
+    if (keyLight) applyKeyShadow(keyLight);
+    const offTier = onTier(() => keyLight && applyKeyShadow(keyLight));
+    const offRevealed = subscribeRevealed(() => keyLight && applyKeyShadow(keyLight));
     return () => {
+      offTier();
+      offRevealed();
       for (const light of lights) scene.remove(light.target);
       lightingRig.lights = {};
     };

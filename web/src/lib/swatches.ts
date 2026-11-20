@@ -41,14 +41,23 @@ export const NATURAL_HAIR = HAIR_COLOURS.find((c) => c.id === "natural")!;
  * Skin tones: a light-to-dark ramp tuned for this renderer (lib/skin.ts). Add, remove or recolour rows freely.
  */
 export const SKIN_TONES = [
+  // light to dark; the extra rows between the originals carry an undertone (rosy and cool, golden, olive, red-brown)
   { id: "porcelain", label: "Porcelain", hex: "#f6c5af" },
+  { id: "ivory", label: "Ivory", hex: "#f2cdb8" },
+  { id: "rosy-fair", label: "Rosy fair", hex: "#eeb3a3" },
   { id: "fair", label: "Fair", hex: "#ecb29a" },
   { id: "light", label: "Light", hex: "#d59d84" },
+  { id: "warm-golden", label: "Warm golden", hex: "#d6a379" },
   { id: "beige", label: "Beige", hex: "#be8c73" },
+  { id: "olive", label: "Olive", hex: "#b48d66" },
   { id: "tan", label: "Tan", hex: "#a87a5e" },
+  { id: "honey", label: "Honey", hex: "#a8764a" },
   { id: "bronze", label: "Bronze", hex: "#906548" },
+  { id: "caramel", label: "Caramel", hex: "#87593a" },
   { id: "brown", label: "Brown", hex: "#775034" },
+  { id: "chestnut", label: "Chestnut", hex: "#6c4330" },
   { id: "deep-brown", label: "Deep brown", hex: "#613d20" },
+  { id: "mahogany", label: "Mahogany", hex: "#563224" },
   { id: "espresso", label: "Espresso", hex: "#492f18" },
   { id: "ebony", label: "Ebony", hex: "#36241c" }, // darker still went near-black under the studio light: features unreadable
 ] as const;

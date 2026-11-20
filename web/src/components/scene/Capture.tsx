@@ -4,6 +4,7 @@
 import { useThree } from "@react-three/fiber";
 import { useEffect } from "react";
 
+import { disposeFinish, renderView } from "@/lib/finish";
 import { sceneRig } from "@/lib/sceneRig";
 
 export function Capture() {
@@ -14,8 +15,11 @@ export function Capture() {
     sceneRig.gl = gl;
     sceneRig.scene = scene;
     sceneRig.camera = camera;
+    sceneRig.draw = () => renderView(gl, scene, camera);
     return () => {
       sceneRig.gl = sceneRig.scene = sceneRig.camera = null;
+      sceneRig.draw = null;
+      disposeFinish();
     };
   }, [gl, scene, camera]);
   return null;

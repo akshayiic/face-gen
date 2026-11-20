@@ -11,6 +11,7 @@ import { Float32BufferAttribute, Group, Mesh, type MeshPhysicalMaterial, type Pe
 import { MeshoptDecoder } from "three/examples/jsm/libs/meshopt_decoder.module.js";
 import { type GLTF, GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 
+import { mountClothes } from "@/lib/clothes";
 import { mountAddons, unmountAddons } from "@/lib/addons";
 import { bindAgeMesh } from "@/lib/age";
 import { loadEyeMaps, updateEyeUniforms } from "@/lib/eyeShader";
@@ -34,6 +35,8 @@ import { morphs, PASSING_LAYERS } from "@/lib/morphs/store";
 import { markHeadVisible, onHeadVisible } from "@/lib/perf";
 import { applyEyes, eyeRig } from "@/lib/eyes";
 import { applySkin, skinRig } from "@/lib/skin";
+import { applySkinDetails } from "@/lib/skinDetails";
+import { applySkinTexture } from "@/lib/surfaceTextures";
 import { whenIdle } from "@/lib/whenIdle";
 
 import { disposeMaterials, materialFor } from "./materials";
@@ -125,6 +128,8 @@ export function Head() {
       // gltfpack drops mesh names but keeps our named part nodes as the parents.
       const part = m.parent?.name || m.name;
       m.material = materialFor(part);
+      // the key light's soft shadow (Lighting.tsx): everything but the clear cornea, whose catchlight stays
+      m.castShadow = m.receiveShadow = !part.startsWith("cornea");
       if (part === "skin") bindAgeMesh(m); // the Age slider's wrinkles need the skin's rest positions in template space
       if (MOUTH_PARTS.has(part)) bindMouthMesh(m, m.material as MeshPhysicalMaterial); // depth behind the lips
       m.frustumCulled = false; // the head is always in view; morphs move vertices anyway
@@ -160,9 +165,12 @@ export function Head() {
     const root = scene.getObjectByName("head") ?? scene;
     mountHair(root);
     mountAddons(root);
+    const unmountClothes = mountClothes(root); // clothes on generated shoulders, fitted to the neck (lib/clothes.ts)
     // The skin material takes the visitor's tone (lib/skin.ts recolours it in place).
     skinRig.material = materialFor("skin");
     applySkin();
+    applySkinDetails(); // blush, freckles, moles (placed on the skin bound above), pores (lib/skinDetails.ts)
+    applySkinTexture(); // an uploaded skin texture, if this tab has one (lib/surfaceTextures.ts)
     // The skin's maps (AO, regions, pores) arrive after the head is on screen: never on the first view's path.
     const skin = skinRig.material;
     // A quality drop (lib/quality.ts) turns the skin's pores off (lib/skinShader.ts).
@@ -307,6 +315,7 @@ export function Head() {
       eyeRig.material = null;
       unmountHair();
       unmountAddons();
+      unmountClothes();
     };
   }, [scene, refresher, camera, canvas, gl, world]);
 

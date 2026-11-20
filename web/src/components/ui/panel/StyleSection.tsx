@@ -6,9 +6,13 @@
  * The thumbnails are lazy <img>s, so they only load once this tab is shown.
  */
 import { AddonControls } from "@/components/ui/AddonControls";
+import { ClothesControl } from "@/components/ui/ClothesControl";
 import { EyeControl } from "@/components/ui/EyeControl";
+import { FinishControl } from "@/components/ui/FinishControl";
 import { HairControl } from "@/components/ui/HairControl";
 import { SkinControl } from "@/components/ui/SkinControl";
+import { SkinDetailsControl } from "@/components/ui/SkinDetailsControl";
+import { HairTextureControl, SkinTextureControl } from "@/components/ui/TextureControls";
 
 import { Block, Hint } from "./Group";
 
@@ -18,14 +22,23 @@ export function StyleSection() {
       <Hint>Colours, hair and glasses. The voice sees them too.</Hint>
       <Block title="Colouring">
         <SkinControl />
+        <SkinDetailsControl />
+        <SkinTextureControl />
         <EyeControl />
       </Block>
       <Block title="Hair, brows and beard">
         <HairControl />
+        <HairTextureControl />
         <AddonControls categories={["eyebrows", "eyelashes", "facialHair"]} />
       </Block>
       <Block title="Accessories">
         <AddonControls categories={["glasses"]} />
+      </Block>
+      <Block title="Clothes">
+        <ClothesControl />
+      </Block>
+      <Block title="Camera">
+        <FinishControl />
       </Block>
     </>
   );
