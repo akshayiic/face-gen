@@ -6,7 +6,7 @@ import { describe, expect, it } from "vitest";
 
 import { CHARACTER_FORMAT, type CharacterFile } from "@/lib/export/characterCode";
 import { CONFIG_FORMAT, configFromMarkdown, configStorage, configToMarkdown, type ConfigFile } from "@/lib/export/configFile";
-import { STORAGE_KEYS, TEXTURE_KEYS, VIEW_KEYS } from "@/lib/storageKeys";
+import { SCULPT_KEY, STORAGE_KEYS, TEXTURE_KEYS, VIEW_KEYS } from "@/lib/storageKeys";
 
 const character: CharacterFile = {
   format: CHARACTER_FORMAT,
@@ -21,7 +21,9 @@ const character: CharacterFile = {
   skin: "warm-golden",
   eyes: "brown",
   clothes: { style: "vneck", colour: "#2b2b2e", inner: "#f2f0ec", fabric: "cotton", fit: 0, shoulders: 0, build: 0, neckline: 0 },
-  skinDetails: { blush: 0.15, freckles: 0, moles: 2, moleSize: 0.3, moleSeed: 5, pores: 1, underEye: 1, variation: 1, veins: 0.4 },
+  skinDetails: { blush: 0.15, freckles: 0, moles: 2, moleSize: 0.3, moleSeed: 5, pores: 1, underEye: 1, variation: 1, veins: 0.4, wrinkles: 0.5, sun: 0.3 },
+  marks: [{ type: "scar", at: [40, 268, 100], normal: [0.55, 0, 0.83], angle: -35, length: 30, width: 2.2, healed: 0.85, seed: 11 }],
+  fineShape: { sliders: { nasolabial: 0.8 }, asymmetry: 0.2, asymSeed: 4 },
 };
 const IMG = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==";
 const config: ConfigFile = {
@@ -42,6 +44,19 @@ describe("config file", () => {
     expect(md).toContain("![ftv:skin-texture](data:image/jpeg;base64,");
     expect(md.match(/data:image\/jpeg/g)).toHaveLength(1); // the image once, not again inside the JSON
     expect(configFromMarkdown(md)).toEqual(config);
+    expect(md).toContain("| 1. scar | 30 mm, 85 % healed |");
+    expect(md).toContain("| nasolabial | +0.80 |");
+  });
+
+  it("carries the sculpt in its own block, and a config without one clears the tab's", () => {
+    const sculpt = "s1:AAABAAIA";
+    const md = configToMarkdown({ ...config, sculpt });
+    expect(md).toContain("```ftv-sculpt\ns1:AAABAAIA\n```");
+    expect(md).toContain('"sculpt": "embedded below"');
+    const back = configFromMarkdown(md)!;
+    expect(back.sculpt).toBe(sculpt);
+    expect(configStorage(back).set[SCULPT_KEY]).toBe(sculpt);
+    expect(configStorage(config).remove).toContain(SCULPT_KEY);
   });
 
   it("reads a file saved without images, and a CRLF copy", () => {
@@ -59,7 +74,7 @@ describe("config file", () => {
     expect(back.textures).toBeUndefined();
     expect(back.finish).toBeUndefined();
     const { set, remove } = configStorage(back);
-    expect(remove).toEqual([]);
+    expect(remove).toEqual([SCULPT_KEY]); // another character's sculpt never stays on this face
     expect(Object.keys(set)).not.toContain(TEXTURE_KEYS.skin);
     expect(Object.keys(set)).not.toContain(VIEW_KEYS.finish);
   });
@@ -71,8 +86,16 @@ describe("config file", () => {
     expect(JSON.parse(set[TEXTURE_KEYS.skin])).toEqual({ name: "pores | close-up.jpg", url: IMG });
     expect(JSON.parse(set[`${TEXTURE_KEYS.skin}:settings`]).mode).toBe("uv");
     expect(JSON.parse(set[VIEW_KEYS.finish]).focus).toBe(0.5);
-    // the file had no hair texture: the tab's is cleared
-    expect(remove).toEqual([TEXTURE_KEYS.hair, `${TEXTURE_KEYS.hair}:settings`]);
+    expect(JSON.parse(set[STORAGE_KEYS.marks])).toEqual(character.marks);
+    expect(JSON.parse(set[STORAGE_KEYS.fineShape])).toEqual(character.fineShape);
+    // the file had no hair texture or scanned maps: the tab's are cleared, and so is any sculpt
+    expect(remove).toEqual([
+      TEXTURE_KEYS.hair, `${TEXTURE_KEYS.hair}:settings`,
+      TEXTURE_KEYS.skinNormal, `${TEXTURE_KEYS.skinNormal}:settings`,
+      TEXTURE_KEYS.skinRough, `${TEXTURE_KEYS.skinRough}:settings`,
+      TEXTURE_KEYS.skinCavity, `${TEXTURE_KEYS.skinCavity}:settings`,
+      SCULPT_KEY,
+    ]);
     // saved without its image: the settings load, the tab keeps its own image
     const kept = configStorage({ ...config, textures: { skin: { ...config.textures!.skin!, image: undefined } } });
     expect(kept.set).not.toHaveProperty(TEXTURE_KEYS.skin);

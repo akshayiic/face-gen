@@ -48,6 +48,7 @@ import { clearRandomFace, randomFace, randomFaceAsync, teethOf } from "@/lib/mor
 import { MOTION } from "@/lib/motion";
 import { morphs } from "@/lib/morphs/store";
 import { centrePose } from "@/lib/pose";
+import { resetFineShape } from "@/lib/sculpt";
 import { setSkinTone, SKIN_DEFAULT, SKIN_TONES, type SkinToneId } from "@/lib/skin";
 import { whenIdle } from "@/lib/whenIdle";
 
@@ -326,7 +327,8 @@ export function randomCharacter(): Promise<void> {
 }
 
 /**
- * Reset: a first visit, i.e. a blank head. The face (every slider, Age, fine-tune) at rest, default skin and eyes,
+ * Reset: a first visit, i.e. a blank head. The face (every slider, Age, fine-tune, the fine shape and any sculpting:
+ * lib/sculpt.ts, undoable there) at rest, default skin and eyes,
  * no hair, brows, lashes, beard or glasses (HAIR_DEFAULTS / ADDON_DEFAULTS), no emotion at the default intensity,
  * and a centred pose. "Look at cursor" is a device preference and stays. Same two steps as Random character.
  */
@@ -335,6 +337,7 @@ export function resetCharacter(): Promise<void> {
   const style: Style = { skin: SKIN_DEFAULT, eyes: EYE_DEFAULT, hair: HAIR_DEFAULTS.style, hairColour: HAIR_DEFAULTS.colour, addons, facialHairColour };
   return track(transition(style, () => {
     morphs.reset(CHARACTER.duration);
+    resetFineShape();
     clearRandomFace();
     setEmotion(NEUTRAL, CHARACTER.duration);
     setIntensity(sliders.emotions.intensity.default, "code", CHARACTER.duration);

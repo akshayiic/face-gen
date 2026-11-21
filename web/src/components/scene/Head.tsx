@@ -25,6 +25,8 @@ import { blinkRetractMm, scheduleAnimCaps } from "@/lib/morphs/animCaps";
 import { attachCapsWorker } from "@/lib/morphs/capsClient";
 import { LimitGeometry } from "@/lib/morphs/limitGeometry";
 import { limiter, loadLimiter } from "@/lib/morphs/limiter";
+import { applyScanMaps } from "@/lib/scanMaps";
+import { bindSculpt } from "@/lib/sculpt";
 import { bindSkinSurface } from "@/lib/skinSurface";
 import { headBytes } from "@/lib/headLoad";
 import { type ScreenCircle, headMorph, registerMorph } from "@/lib/headMorph";
@@ -141,6 +143,8 @@ export function Head() {
     // The scalp tint under procedural hair (lib/skinShader.ts); zeros = no hair.
     skinMesh?.geometry.setAttribute("aHairCover", new Float32BufferAttribute(new Float32Array(skinMesh.geometry.getAttribute("position").count), 1));
     const unbindSkin = skinMesh ? bindSkinSurface(skinMesh, refresher) : () => {};
+    // sculpting and the fine shape (lib/sculpt.ts): an offset on the skin, kept clear of the mouth's and eyes' seams
+    const unbindSculpt = skinMesh ? bindSculpt(skinMesh, refresher, meshes.filter((m) => m !== skinMesh)) : () => {};
     // The limiter reads the vertices that can break from the same CPU morph data (lib/morphs/limits.ts). It loads now
     // (lib/morphs/limiter.ts: it is not in the page's first JavaScript); the caps worker gets the vertices
     // as soon as it is here (lib/morphs/capsClient.ts; it sets its own limiter up off the main thread). The
@@ -171,6 +175,7 @@ export function Head() {
     applySkin();
     applySkinDetails(); // blush, freckles, moles (placed on the skin bound above), pores (lib/skinDetails.ts)
     applySkinTexture(); // an uploaded skin texture, if this tab has one (lib/surfaceTextures.ts)
+    applyScanMaps(); // scanned normal, roughness and cavity maps, if this tab has them (lib/scanMaps.ts)
     // The skin's maps (AO, regions, pores) arrive after the head is on screen: never on the first view's path.
     const skin = skinRig.material;
     // A quality drop (lib/quality.ts) turns the skin's pores off (lib/skinShader.ts).
@@ -299,6 +304,7 @@ export function Head() {
       stopMaps();
       stopTier();
       unbindSkin();
+      unbindSculpt();
       offLimiter();
       window.clearTimeout(limiterTimer);
       limiter.attach(null);

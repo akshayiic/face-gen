@@ -42,6 +42,12 @@ export function skinOffsets(ids: Int32Array, last: Map<string, number>, acc: Flo
   return !!mesh && !!refresher && refresher.accumulateOffsets(mesh, ids, weight, last, acc);
 }
 
+/** Bumped whenever the skin's sculpt offset changes (lib/sculpt.ts): for followers that only watch slider weights. */
+export function skinExtraVersion(): number {
+  const { mesh, refresher } = skinSurface;
+  return mesh && refresher ? refresher.extraVersionOf(mesh) : 0;
+}
+
 export function bindSkinSurface(mesh: Mesh, refresher: NormalRefresher): () => void {
   skinSurface.mesh = mesh;
   skinSurface.refresher = refresher;

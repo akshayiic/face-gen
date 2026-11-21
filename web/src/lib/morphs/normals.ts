@@ -5,6 +5,10 @@
  * ~1-3 ms for the whole head; Head.tsx runs it live while the shape moves (within its LIVE_SETTLE
  * frame budget) and once more when it settles. On a slow device (a phone: ~25 ms each) the live refreshes run in
  * lib/morphs/normalsWorker.ts instead (refreshLater): the same arithmetic (normalsCompute.ts), so the same normals.
+ *
+ * A mesh can also carry an `extra` offset per vertex (setExtra: the skin's sculpting and fine-shape fields,
+ * lib/sculpt.ts), always added at full weight: in the shape, its normals, the positions the limiter samples and the live
+ * offsets followers read, so hair, brows, beards and glasses follow a sculpted face like any other.
  */
 import { BufferAttribute, Float32BufferAttribute, type Mesh } from "three";
 
@@ -24,7 +28,16 @@ type Entry = {
   /** UV seams: each vertex → the first vertex at the same place (the copies must share one normal), or null. */
   weld: Int32Array | null;
   dirty: boolean; // normals currently differ from the rest pose
+  extra: Float32Array | null; // offsets always added (setExtra), the mesh's own space
+  extraVersion: number;
 };
+
+/** What accumulateOffsets last added of each mesh's extra, per caller (its `last` map). */
+const extraSeen = new WeakMap<Map<string, number>, Float32Array>();
+const EXTRA = "\u0000extra";
+let extraVersions = 0; // one counter for every mesh: a re-registered mesh never repeats a version a caller has seen
+/** A mesh's extra across remove() + add() (head.extra.glb re-registers the skin with more targets). */
+const keptExtra = new WeakMap<Mesh, Float32Array>();
 
 /**
  * head.glb splits vertices along UV seams: the copies share position, deltas and rest normal but not triangles, so
@@ -88,6 +101,20 @@ export class NormalRefresher {
   accumulateOffsets(mesh: Mesh, ids: Int32Array, weight: (target: string) => number, last: Map<string, number>, acc: Float32Array): boolean {
     const e = this.entries.find((x) => x.mesh === mesh);
     if (!e) return false;
+    if ((last.get(EXTRA) ?? 0) !== e.extraVersion) {
+      // the extra changed since this caller's last sum: swap what it added for the new values
+      last.set(EXTRA, e.extraVersion);
+      let seen = extraSeen.get(last);
+      if (!seen || seen.length !== ids.length * 3) extraSeen.set(last, (seen = new Float32Array(ids.length * 3)));
+      for (let i = 0; i < ids.length; i++) {
+        const v = ids[i] * 3;
+        for (let c = 0; c < 3; c++) {
+          const now = e.extra ? e.extra[v + c] : 0;
+          acc[i * 3 + c] += now - seen[i * 3 + c];
+          seen[i * 3 + c] = now;
+        }
+      }
+    }
     for (const d of e.deltas) {
       const w = weight(d.target);
       const dw = w - (last.get(d.target) ?? 0);
@@ -112,11 +139,12 @@ export class NormalRefresher {
   sample(mesh: Mesh, ids: Int32Array, weight: (target: string) => number, out: Float32Array, rest = true): boolean {
     const e = this.entries.find((x) => x.mesh === mesh);
     if (!e) return false;
+    const x = rest ? e.extra : null;
     for (let i = 0; i < ids.length; i++) {
       const v = ids[i] * 3;
-      out[i * 3] = rest ? e.base[v] : 0;
-      out[i * 3 + 1] = rest ? e.base[v + 1] : 0;
-      out[i * 3 + 2] = rest ? e.base[v + 2] : 0;
+      out[i * 3] = rest ? e.base[v] + (x ? x[v] : 0) : 0;
+      out[i * 3 + 1] = rest ? e.base[v + 1] + (x ? x[v + 1] : 0) : 0;
+      out[i * 3 + 2] = rest ? e.base[v + 2] + (x ? x[v + 2] : 0) : 0;
     }
     for (const d of e.deltas) {
       const w = weight(d.target);
@@ -160,7 +188,29 @@ export class NormalRefresher {
       normal,
       scratch: new Float32Array(pos.count * 3),
       dirty: false,
+      extra: keptExtra.get(mesh) ?? null,
+      extraVersion: ++extraVersions,
     });
+  }
+
+  /**
+   * Offsets always added to a mesh's shape (its own space, 3 floats per vertex; null for none). The array is kept by
+   * reference: write into it and call this again to say it changed. The next refresh uses it.
+   */
+  setExtra(mesh: Mesh, extra: Float32Array | null): void {
+    const e = this.entries.find((x) => x.mesh === mesh);
+    if (!e) return;
+    e.extra = extra;
+    e.extraVersion = ++extraVersions;
+    if (extra) keptExtra.set(mesh, extra);
+    else keptExtra.delete(mesh);
+    this.drop(e); // the worker has the old base + extra: send it again when it's next needed
+    e.sent = null;
+  }
+
+  /** Bumped whenever a mesh's extra changes (followers that only watch the slider weights check this too). */
+  extraVersionOf(mesh: Mesh): number {
+    return this.entries.find((x) => x.mesh === mesh)?.extraVersion ?? 0;
   }
 
   clear(): void {
@@ -200,9 +250,11 @@ export class NormalRefresher {
     this.stamp++; // a live refresh still in the worker is older than this one
     for (const e of this.entries) {
       const active = this.active(e, weight);
-      if (active.length === 0 && !e.dirty) continue; // at rest the file's normals are already right
-      e.dirty = active.length > 0;
-      computeShape(e, active.map(({ d, w }) => ({ w, data: (d.data ??= toFloat(d.attr)) })), e.scratch, e.normal.array as Float32Array);
+      if (active.length === 0 && !e.dirty && !e.extra) continue; // at rest the file's normals are already right
+      e.dirty = active.length > 0 || !!e.extra;
+      const sums = active.map(({ d, w }) => ({ w, data: (d.data ??= toFloat(d.attr)) }));
+      if (e.extra) sums.push({ w: 1, data: e.extra });
+      computeShape(e, sums, e.scratch, e.normal.array as Float32Array);
       e.normal.needsUpdate = true;
       for (const fn of this.listeners) fn(e.mesh, e.scratch);
     }
@@ -226,9 +278,15 @@ export class NormalRefresher {
     const dirty = new Map<number, boolean>();
     for (const e of this.entries) {
       const active = this.active(e, weight);
-      if (active.length === 0 && !e.dirty) continue;
+      if (active.length === 0 && !e.dirty && !e.extra) continue;
       if (!e.sent) {
-        w.postMessage({ type: "mesh", id: e.id, mesh: { base: e.base, index: e.index, weld: e.weld } } satisfies ToNormalsWorker); // copied
+        // the worker's base is the rest shape with the extra in it (sent again when the extra changes: setExtra)
+        let base = e.base;
+        if (e.extra) {
+          base = e.base.slice();
+          for (let i = 0; i < base.length; i++) base[i] += e.extra[i];
+        }
+        w.postMessage({ type: "mesh", id: e.id, mesh: { base, index: e.index, weld: e.weld } } satisfies ToNormalsWorker); // copied
         e.sent = new Set();
       }
       for (const { d } of active) {
@@ -237,7 +295,7 @@ export class NormalRefresher {
         e.sent.add(d.target);
       }
       jobs.push({ id: e.id, active: active.map(({ d, w: weightNow }) => [d.target, weightNow]) });
-      dirty.set(e.id, active.length > 0);
+      dirty.set(e.id, active.length > 0 || !!e.extra);
     }
     if (!jobs.length) return true;
     const req = ++this.stamp;

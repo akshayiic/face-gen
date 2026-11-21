@@ -11,6 +11,8 @@ import { hairState } from "@/lib/hair";
 import { morphs } from "@/lib/morphs/store";
 import { POSE_LIMITS, poseRig, type PoseKey } from "@/lib/pose";
 import { skinState } from "@/lib/skin";
+import { marks } from "@/lib/marks";
+import { fineShape } from "@/lib/sculpt";
 import { skinDetails } from "@/lib/skinDetails";
 
 import { CHARACTER_FORMAT, CHARACTER_VERSION, encodeCharacter, type CharacterFile } from "./characterCode";
@@ -40,6 +42,8 @@ export function currentCharacter(): CharacterFile {
     eyes: eyeState.colour,
     clothes: { ...clothesState },
     skinDetails: { ...skinDetails },
+    marks: marks.map((m) => ({ ...m, at: m.at.map((v) => round(v, 2)), normal: m.normal.map((v) => round(v, 4)), length: round(m.length, 2), width: round(m.width, 2), healed: round(m.healed, 3), angle: round(m.angle, 1) })),
+    fineShape: { ...fineShape, sliders: { ...fineShape.sliders } },
   };
 }
 

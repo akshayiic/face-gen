@@ -1,6 +1,8 @@
 /**
  * Skin details (Style tab → Colouring): blush, freckles, moles, how deep the pores read, how dark it is under the
- * eyes, how uneven the tone is and how much the veins show. Plain module state pushed into the skin shader's uniforms (lib/skinShader.ts), kept in sessionStorage like the
+ * eyes, how uneven the tone is and how much the veins show; wrinkles at any age and how much expressions crease the
+ * skin (lib/age.ts); and weathering: sun damage, sun spots, broken capillaries, oiliness, sweat and grime.
+ * Plain module state pushed into the skin shader's uniforms (lib/skinShader.ts), kept in sessionStorage like the
  * tone, and carried by the rebuild link. The baked colour in the .glb export picks all of it up (it draws the skin's
  * own shader into its UVs).
  *
@@ -8,6 +10,7 @@
  * sliders make. `moleSeed` picks where: the same seed puts them in the same places on any face, "Shuffle" rolls a new
  * one. Places are drawn from the face, ears and neck, never on the lips, the eyes or inside the nostrils.
  */
+import { setWrinkleSettings } from "@/lib/age";
 import { MAX_MOLES, skinUniforms } from "@/lib/skinShader";
 import { skinSurface } from "@/lib/skinSurface";
 import { STORAGE_KEYS } from "@/lib/storageKeys";
@@ -30,9 +33,24 @@ export type SkinDetails = {
   variation: number;
   /** 0..1: veins under thin skin (temples, under the eyes, neck) */
   veins: number;
+  /** 0..1.5: wrinkles at any age, as if this much older on the Age slider */
+  wrinkles: number;
+  /** 0..2: how deep expressions crease the skin (frown lines, crow's feet …); 1 is natural */
+  expression: number;
+  /** 0..1 each: weathering */
+  sun: number;
+  sunSpots: number;
+  capillaries: number;
+  /** 0..2: 1 is the skin's own T-zone shine */
+  oiliness: number;
+  sweat: number;
+  grime: number;
 };
 
-export const SKIN_DETAILS_DEFAULTS: SkinDetails = { blush: 0, freckles: 0, moles: 0, moleSize: 0.4, moleSeed: 1, pores: 1, underEye: 1, variation: 1, veins: 0.4 };
+export const SKIN_DETAILS_DEFAULTS: SkinDetails = {
+  blush: 0, freckles: 0, moles: 0, moleSize: 0.4, moleSeed: 1, pores: 1, underEye: 1, variation: 1, veins: 0.4,
+  wrinkles: 0, expression: 1, sun: 0, sunSpots: 0, capillaries: 0, oiliness: 1, sweat: 0, grime: 0,
+};
 export const skinDetails: SkinDetails = { ...SKIN_DETAILS_DEFAULTS };
 
 const clamp = (v: unknown, lo: number, hi: number, fallback: number) =>
@@ -52,6 +70,14 @@ export function sanitizeSkinDetails(raw: unknown): SkinDetails {
     underEye: clamp(r.underEye, 0, 2, d.underEye),
     variation: clamp(r.variation, 0, 2, d.variation),
     veins: clamp(r.veins, 0, 1, d.veins),
+    wrinkles: clamp(r.wrinkles, 0, 1.5, d.wrinkles),
+    expression: clamp(r.expression, 0, 2, d.expression),
+    sun: clamp(r.sun, 0, 1, d.sun),
+    sunSpots: clamp(r.sunSpots, 0, 1, d.sunSpots),
+    capillaries: clamp(r.capillaries, 0, 1, d.capillaries),
+    oiliness: clamp(r.oiliness, 0, 2, d.oiliness),
+    sweat: clamp(r.sweat, 0, 1, d.sweat),
+    grime: clamp(r.grime, 0, 1, d.grime),
   };
 }
 
@@ -89,6 +115,13 @@ export function applySkinDetails(): void {
   u.uUnderEye.value = skinDetails.underEye;
   u.uMottle.value = skinDetails.variation;
   u.uVeins.value = skinDetails.veins;
+  u.uSun.value = skinDetails.sun;
+  u.uSunSpots.value = skinDetails.sunSpots;
+  u.uCapillaries.value = skinDetails.capillaries;
+  u.uOil.value = skinDetails.oiliness;
+  u.uSweat.value = skinDetails.sweat;
+  u.uGrime.value = skinDetails.grime;
+  setWrinkleSettings(skinDetails.wrinkles, skinDetails.expression);
   const spots = molePlaces(skinDetails.moleSeed);
   const n = Math.min(skinDetails.moles, spots.length);
   for (let i = 0; i < n; i++) {

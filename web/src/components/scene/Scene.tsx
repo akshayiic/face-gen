@@ -19,6 +19,7 @@ import { setTextureRenderer } from "@/lib/textures";
 
 import { Capture } from "./Capture";
 import { PieceFadeRender } from "./PieceFadeRender";
+import { SkinTools } from "./SkinTools";
 import { Head } from "./Head";
 import { IdleLife } from "./IdleLife";
 import { Lighting } from "./Lighting";
@@ -150,6 +151,7 @@ export default function Scene() {
         <Precompile />
       </Suspense>
       <Controls />
+      <SkinTools />
       <PerfProbe />
       <Capture />
       <PieceFadeRender />

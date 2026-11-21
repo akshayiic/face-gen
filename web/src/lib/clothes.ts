@@ -31,6 +31,7 @@ import {
 import { installHairShadow } from "@/lib/hairShadow";
 import { revealedSnapshot, subscribeRevealed } from "@/lib/headLoad";
 import { morphs } from "@/lib/morphs/store";
+import { sculptedVertexPosition } from "@/lib/sculpt";
 import { STORAGE_KEYS } from "@/lib/storageKeys";
 
 export type ClothesStyleId = "none" | "tee" | "vneck" | "scoop" | "turtleneck" | "shirt" | "blazer";
@@ -285,7 +286,7 @@ function makeProbe(skin: Mesh, root: Object3D): Probe | null {
   const P = new Float32Array(rig.bust.length * 3);
   const v = new Vector3();
   rig.bust.forEach((i, k) => {
-    skin.getVertexPosition(i, v).applyMatrix4(toRoot).toArray(P, k * 3);
+    sculptedVertexPosition(skin, i, v).applyMatrix4(toRoot).toArray(P, k * 3); // with the sculpt (lib/sculpt.ts)
     at.set(i, k);
   });
 

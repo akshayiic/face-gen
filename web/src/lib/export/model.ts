@@ -47,6 +47,7 @@ import { characterSettled } from "@/lib/character";
 import { extraReady } from "@/lib/headExtra";
 
 import { clothesMaterialFor } from "@/lib/clothes";
+import { sculptedVertexPosition } from "@/lib/sculpt";
 import { skinRig } from "@/lib/skin";
 import { skinUniforms } from "@/lib/skinShader";
 import { skinSurface } from "@/lib/skinSurface";
@@ -216,7 +217,7 @@ function bakeGeometry(mesh: Mesh, m: Matrix4): BufferGeometry {
   const normalMatrix = new Matrix3().getNormalMatrix(m);
   const srcNormal = src.attributes.normal as BufferAttribute | undefined;
   for (let i = 0; i < n; i++) {
-    mesh.getVertexPosition(i, v).applyMatrix4(m).toArray(position, i * 3);
+    sculptedVertexPosition(mesh, i, v).applyMatrix4(m).toArray(position, i * 3); // the skin with its sculpt (lib/sculpt.ts)
     if (srcNormal) v.fromBufferAttribute(srcNormal, i).applyMatrix3(normalMatrix).normalize().toArray(normal, i * 3);
   }
   const out = new BufferGeometry();

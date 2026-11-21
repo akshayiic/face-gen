@@ -5,6 +5,8 @@
  */
 import { sliders } from "@/lib/data";
 import { finishSettings } from "@/lib/finishSettings";
+import { SCAN_SLOTS, scanMapDataUrl, scanMapsSnapshot } from "@/lib/scanMaps";
+import { currentSculpt } from "@/lib/sculpt";
 import { hairTextureSnapshot, skinTextureSnapshot, textureDataUrl } from "@/lib/surfaceTextures";
 
 import { currentCharacter } from "./character";
@@ -20,6 +22,12 @@ export function currentConfig(images: boolean): ConfigFile {
   }
   const hair = hairTextureSnapshot();
   if (hair.on) textures.hair = withImage({ name: hair.name, settings: { amount: hair.amount } }, images && textureDataUrl("hair"));
+  const scans = scanMapsSnapshot();
+  for (const { id } of SCAN_SLOTS) {
+    const s = scans[id];
+    if (s.on) textures[id] = withImage({ name: s.name, settings: { amount: s.amount } }, images && scanMapDataUrl(id));
+  }
+  const sculpt = currentSculpt();
   return {
     format: CONFIG_FORMAT,
     version: CONFIG_VERSION,
@@ -27,6 +35,7 @@ export function currentConfig(images: boolean): ConfigFile {
     character: currentCharacter(),
     textures,
     finish: { ...finishSettings },
+    ...(sculpt ? { sculpt } : {}),
   };
 }
 

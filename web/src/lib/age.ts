@@ -8,7 +8,14 @@
  * placed from a few landmarks (web/src/data/ageing.json); the shader turns the height into a bumped normal with
  * screen-space derivatives. Nothing is downloaded. Lines thinner than about a pixel fade out (no shimmer).
  *
- * Tweak here: AGE (overall strengths). Per-wrinkle onsets and depths live in pipeline/config/age.toml [skin].
+ * Two more things deepen the same lines (lib/skinDetails.ts):
+ *  - "Wrinkles": lines at any age (a weathered 30-year-old), added to what the Age slider gives;
+ *  - "Expression lines": lines that come with the face's expression, as real skin folds: raised brows crease the
+ *    forehead, a frown the "11s" between the brows, a smile or a squint the crow's feet and the nasolabial folds, a
+ *    pucker the lip lines. Read every frame from the expression weights the face shows (sliders, emotion, speech).
+ *
+ * Tweak here: AGE (overall strengths), EXPRESSION (how deep each line goes at a full expression, mm). Per-wrinkle onsets
+ * and depths for age live in pipeline/config/age.toml [skin].
  */
 import { Matrix4, type Mesh, type Object3D, Vector3 } from "three";
 
@@ -22,11 +29,29 @@ export const AGE = {
   mottle: 0.06, // uneven pigment at Age +1
   roughness: 0.08, // older skin is a little less glossy …
   youthSmooth: 0.04, // … younger skin a little more (roughness − this at Age −1)
+  extra: 1.8, // "Wrinkles" at 1 deepens the lines this many times what Age +1 gives (a weathered face, not just an old one)
 };
 
 type Skin = Record<string, { onset: number; depth_mm: number }>;
 const SKIN = ageing.skin as Skin;
 const FEATURES = ["forehead", "glabella", "crows_feet", "under_eye", "nasolabial", "marionette", "lip_lines", "neck", "texture"] as const;
+
+/** mm each line deepens at a full expression ("Expression lines" at 1). */
+export const EXPRESSION: Record<(typeof FEATURES)[number], number> = {
+  forehead: 0.65, glabella: 0.7, crows_feet: 0.55, under_eye: 0.28, nasolabial: 0.9, marionette: 0.3, lip_lines: 0.18, neck: 0, texture: 0,
+};
+
+/** How much of "Wrinkles" each line takes: weathering lines the face, not so much the neck (rings there read as banding). */
+const EXTRA_SHARE: Record<(typeof FEATURES)[number], number> = {
+  forehead: 1, glabella: 1, crows_feet: 1, under_eye: 1, nasolabial: 1, marionette: 0.8, lip_lines: 0.6, neck: 0.25, texture: 1,
+};
+
+const wrinkleState = {
+  age: 0, // the Age slider
+  extra: 0, // "Wrinkles" (0..1.5): as if this much older, on top of the age
+  expression: 1, // "Expression lines" (0..2)
+  driven: new Array(FEATURES.length).fill(0) as number[], // each line's expression amount now (0..~1.3)
+};
 const L = ageing.landmarks as Record<string, number[]>;
 const mm = (n: string) => new Vector3(L[n][0], L[n][1], L[n][2]).multiplyScalar(1000);
 
@@ -46,18 +71,76 @@ export const ageUniforms = {
   uCH: { value: mm("cheilion_l") }, uLI: { value: mm("labrale_inferius") }, uME: { value: mm("menton") },
 };
 
-/** Push an Age slider value (−1..1) into the shader uniforms. */
-export function setAge(age: number): void {
+/** Each line's depth (mm) from the age, the "Wrinkles" amount and the expression now, into the uniforms. */
+function composeWrinkles(): void {
+  const { age, extra, expression, driven } = wrinkleState;
   const old = Math.max(0, age);
+  let any = age > 0.01 || age < -0.01;
   FEATURES.forEach((f, i) => {
     const { onset, depth_mm } = SKIN[f];
     const k = Math.min(1, Math.max(0, (old - onset) / Math.max(1e-3, 1 - onset)));
-    ageUniforms.uAgeW.value[i] = depth_mm * k * k * (3 - 2 * k) * AGE.wrinkles; // smoothstep onset
+    const w = depth_mm * (k * k * (3 - 2 * k) + AGE.extra * EXTRA_SHARE[f] * extra) * AGE.wrinkles + EXPRESSION[f] * expression * driven[i];
+    ageUniforms.uAgeW.value[i] = w;
+    if (w > 1e-4) any = true;
   });
+  ageUniforms.uAgeOn.value = any ? 1 : 0;
+}
+
+/** Push an Age slider value (−1..1) into the shader uniforms. */
+export function setAge(age: number): void {
+  const old = Math.max(0, age);
+  wrinkleState.age = age;
   ageUniforms.uAgeTone.value = AGE.tone * old;
   ageUniforms.uAgeMottle.value = AGE.mottle * old;
   ageUniforms.uAgeRough.value = age >= 0 ? AGE.roughness * age : AGE.youthSmooth * age;
-  ageUniforms.uAgeOn.value = age > 0.01 || age < -0.01 ? 1 : 0;
+  composeWrinkles();
+}
+
+/** "Wrinkles" (0..1.5, as if that much older) and "Expression lines" (0..2) from lib/skinDetails.ts. */
+export function setWrinkleSettings(extra: number, expression: number): void {
+  wrinkleState.extra = extra;
+  wrinkleState.expression = expression;
+  composeWrinkles();
+}
+
+const e = (t: string) => morphs.effective(t);
+const pos = (v: number) => Math.max(0, v);
+const cap = (v: number) => Math.min(1.3, Math.max(0, v));
+
+/**
+ * How far the face's expression folds each line now (0 = at rest), from the fine-tune controls and the emotion's upper
+ * and lower parts (speech moves the mouth through the same targets). The skin calls this before it draws.
+ */
+export function updateExpressionWrinkles(): void {
+  if (wrinkleState.expression <= 0) {
+    if (wrinkleState.driven.some((v) => v !== 0)) {
+      wrinkleState.driven.fill(0);
+      composeWrinkles();
+    }
+    return;
+  }
+  const crows = cap(0.8 * pos(e("fx_smile")) + e("fx_squint") + e("emo_happy_upper") + 0.6 * e("emo_happy_lower") + 0.7 * e("emo_pain_upper")
+    + 0.4 * e("emo_disgusted_upper") + 0.5 * e("emo_suspicious_upper") + 0.4 * e("emo_tired_upper"));
+  const next = [
+    cap(pos(e("fx_brows")) + e("emo_surprised_upper") + 0.8 * e("emo_worried_upper") + 0.7 * e("emo_afraid_upper") + 0.5 * e("emo_sad_upper")), // forehead
+    cap(e("fx_frown") + 0.6 * pos(-e("fx_brows")) + e("emo_angry_upper") + 0.7 * e("emo_confused_upper") + 0.6 * e("emo_suspicious_upper")
+      + 0.6 * e("emo_worried_upper") + 0.7 * e("emo_disgusted_upper") + e("emo_pain_upper") + 0.4 * e("emo_sad_upper")), // glabella
+    crows,
+    0.6 * crows, // under the eyes
+    cap(pos(e("fx_smile")) + e("emo_happy_lower") + 0.8 * e("emo_disgusted_lower") + e("fx_sneer") + 0.5 * e("emo_contempt_lower") + 0.5 * e("emo_pain_lower")), // nasolabial
+    cap(0.6 * pos(-e("fx_smile")) + 0.6 * e("emo_sad_lower") + 0.4 * e("emo_angry_lower")), // marionette
+    cap(0.8 * pos(-e("fx_mouth_width")) + 0.3 * pos(-e("fx_lips"))), // lip lines (a pucker, pressed lips)
+    0,
+    0,
+  ];
+  let changed = false;
+  for (let i = 0; i < next.length; i++) {
+    if (Math.abs(next[i] - wrinkleState.driven[i]) > 1e-3) {
+      wrinkleState.driven[i] = next[i];
+      changed = true;
+    }
+  }
+  if (changed) composeWrinkles();
 }
 
 // The slider value arrives through the morph store (drags, tweens, random face, reset): no React involved.

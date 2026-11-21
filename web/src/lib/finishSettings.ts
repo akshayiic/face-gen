@@ -1,6 +1,6 @@
 /**
- * The camera finish's settings (Style tab → Camera): on or off, and how much depth of field, bloom, film grain, vignette
- * and colour grade lib/finish.ts puts over the frame. Plain state with no three.js (the panel imports it), kept in
+ * The camera finish's settings (Style tab → Camera): on or off, and how much depth of field, bloom, film grain, vignette,
+ * colour grade, clarity and skin translucency lib/finish.ts puts over the frame; and which light the studio uses. Plain state with no three.js (the panel imports it), kept in
  * sessionStorage. It is how the view is drawn, not part of the character: not in the rebuild link, not in the export.
  */
 import { VIEW_KEYS } from "@/lib/storageKeys";
@@ -14,9 +14,18 @@ export type FinishSettings = {
   grain: number;
   vignette: number;
   grade: number;
+  /** 0..1: local contrast and fine sharpening (the crisp, gritty look of a retouched portrait) */
+  clarity: number;
+  /** 0..1: light scattering under the skin (a screen-space blur of the skin only, widest in red) */
+  skin: number;
+  /** the light: the soft studio, a hard sun from above, or a low side light (components/scene/Lighting.tsx) */
+  light: LightPreset;
 };
 
-export const FINISH_DEFAULTS: FinishSettings = { on: true, focus: 0.5, bloom: 0.5, grain: 0.5, vignette: 0.5, grade: 0.5 };
+export const LIGHT_PRESETS = ["studio", "sun", "side"] as const;
+export type LightPreset = (typeof LIGHT_PRESETS)[number];
+
+export const FINISH_DEFAULTS: FinishSettings = { on: true, focus: 0.5, bloom: 0.5, grain: 0.5, vignette: 0.5, grade: 0.5, clarity: 0.3, skin: 0.6, light: "studio" };
 export const finishSettings: FinishSettings = { ...FINISH_DEFAULTS };
 
 const unit = (v: unknown, fallback: number) => (typeof v === "number" && Number.isFinite(v) ? Math.min(1, Math.max(0, v)) : fallback);
@@ -32,6 +41,9 @@ export function sanitizeFinish(raw: unknown): FinishSettings {
     grain: unit(r.grain, d.grain),
     vignette: unit(r.vignette, d.vignette),
     grade: unit(r.grade, d.grade),
+    clarity: unit(r.clarity, d.clarity),
+    skin: unit(r.skin, d.skin),
+    light: LIGHT_PRESETS.includes(r.light as LightPreset) ? (r.light as LightPreset) : d.light,
   };
 }
 

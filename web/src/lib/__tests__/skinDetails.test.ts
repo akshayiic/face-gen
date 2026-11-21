@@ -71,6 +71,7 @@ describe("skin details", { timeout: 30_000 }, () => {
   it("checks stored and linked values field by field", () => {
     expect(sanitizeSkinDetails({ blush: 9, freckles: -1, moles: 40.4, moleSeed: "x", pores: "deep", variation: 7, veins: -2, extra: 1 })).toEqual({
       blush: 1, freckles: 0, moles: MAX_MOLES, moleSize: 0.4, moleSeed: 1, pores: 1, underEye: 1, variation: 2, veins: 0,
+      wrinkles: 0, expression: 1, sun: 0, sunSpots: 0, capillaries: 0, oiliness: 1, sweat: 0, grime: 0,
     });
     // a link from before tone variation and veins existed gets their defaults
     expect(sanitizeSkinDetails({ blush: 0.2 })).toMatchObject({ variation: 1, veins: 0.4 });

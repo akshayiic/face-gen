@@ -2,7 +2,8 @@
 
 /**
  * Skin details (Style tab → Colouring): blush, freckles, moles (how many, how big, shuffle where), pores, the shadow
- * under the eyes, tone variation and veins. State in lib/skinDetails.ts, pushed straight into the skin shader.
+ * under the eyes, tone variation and veins; wrinkles and expression lines; weathering (sun damage, sun spots, broken
+ * capillaries, oiliness, sweat, grime). State in lib/skinDetails.ts, pushed straight into the skin shader.
  */
 import { useSyncExternalStore } from "react";
 
@@ -42,6 +43,17 @@ export function SkinDetailsControl() {
       <RangeRow label="Under the eyes" value={s.underEye} min={0} max={2} step={0.05} reset={D.underEye} low="bright" high="dark circles" mid format={times} onChange={(underEye) => setSkinDetails({ underEye })} />
       <RangeRow label="Tone variation" value={s.variation} min={0} max={2} step={0.05} reset={D.variation} low="even" high="blotchy" mid format={times} onChange={(variation) => setSkinDetails({ variation })} />
       <RangeRow label="Veins" value={s.veins} min={0} max={1} step={0.05} reset={D.veins} low="hidden" high="visible" format={pct} onChange={(veins) => setSkinDetails({ veins })} />
+      <RangeRow label="Wrinkles" value={s.wrinkles} min={0} max={1.5} step={0.05} reset={D.wrinkles} low="smooth" high="deep lines" format={pct} onChange={(wrinkles) => setSkinDetails({ wrinkles })} />
+      <RangeRow label="Expression lines" value={s.expression} min={0} max={2} step={0.05} reset={D.expression} low="none" high="deep creases" mid format={times} onChange={(expression) => setSkinDetails({ expression })} />
+      <div className="px-5 pt-2.5">
+        <span className="text-body text-ink">Weathering</span>
+      </div>
+      <RangeRow label="Sun damage" value={s.sun} min={0} max={1} step={0.05} reset={D.sun} low="none" high="leathery" format={pct} onChange={(sun) => setSkinDetails({ sun })} />
+      <RangeRow label="Sun spots" value={s.sunSpots} min={0} max={1} step={0.05} reset={D.sunSpots} low="none" high="many" format={pct} onChange={(sunSpots) => setSkinDetails({ sunSpots })} />
+      <RangeRow label="Broken capillaries" value={s.capillaries} min={0} max={1} step={0.05} reset={D.capillaries} low="none" high="many" format={pct} onChange={(capillaries) => setSkinDetails({ capillaries })} />
+      <RangeRow label="Oiliness" value={s.oiliness} min={0} max={2} step={0.05} reset={D.oiliness} low="matte" high="greasy" mid format={times} onChange={(oiliness) => setSkinDetails({ oiliness })} />
+      <RangeRow label="Sweat" value={s.sweat} min={0} max={1} step={0.05} reset={D.sweat} low="dry" high="dripping" format={pct} onChange={(sweat) => setSkinDetails({ sweat })} />
+      <RangeRow label="Grime" value={s.grime} min={0} max={1} step={0.05} reset={D.grime} low="clean" high="filthy" format={pct} onChange={(grime) => setSkinDetails({ grime })} />
     </>
   );
 }

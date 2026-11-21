@@ -12,6 +12,10 @@
  *
  * Tweak the numbers in LIGHTING. `__faceToVoice.lighting.rig.toneMapping("agx" | "aces" |
  * "neutral", exposure)` switches tone mapping live for comparisons.
+ *
+ * The light (Style tab → Camera, lib/finishSettings.ts `light`) swaps the three lights for a preset in LIGHT_PRESETS:
+ * the soft studio above, a hard sun from high in front (deep shade under the brows, nose and chin, crisp shadow edges:
+ * the light that shows every pore and line), or a low side light (half the face in shadow).
  */
 import { useThree } from "@react-three/fiber";
 import { useEffect, useRef } from "react";
@@ -34,6 +38,7 @@ import {
 } from "three";
 
 import { setCorneaEnvironment } from "@/lib/eyeShader";
+import { finishSettings, type LightPreset, onFinishChange } from "@/lib/finishSettings";
 import { revealedSnapshot, subscribeRevealed } from "@/lib/headLoad";
 import { onTier, tierSettings } from "@/lib/quality";
 
@@ -70,6 +75,46 @@ export const LIGHTING = {
   /** What the lights aim at (the middle of the face), so their direction does not depend on the origin. */
   target: [0, 0.27, 0.05] as V3,
 };
+
+type Light = { position: V3; intensity: number; color: string };
+type Preset = { key: Light; fill: Light; rim: Light; environmentIntensity: number; exposure: number; softMm: number };
+const studioPreset = (): Preset => ({
+  key: { ...LIGHTING.key }, fill: { ...LIGHTING.fill }, rim: { ...LIGHTING.rim },
+  environmentIntensity: LIGHTING.environmentIntensity, exposure: LIGHTING.exposure, softMm: LIGHTING.keyShadow.softMm,
+});
+
+/** The lights for each preset (the studio is LIGHTING as it ships). */
+export const LIGHT_PRESETS: Record<LightPreset, Preset> = {
+  studio: studioPreset(),
+  sun: {
+    key: { position: [-0.45, 2.7, 1.5], intensity: 3.2, color: "#fff0dc" },
+    fill: { position: [1.8, 0.3, 0.9], intensity: 0.12, color: "#dfe6f2" },
+    rim: { position: [1.3, 1.4, -1.7], intensity: 0.9, color: "#fff4e6" },
+    environmentIntensity: 0.28,
+    exposure: 1.3,
+    softMm: 0.8,
+  },
+  side: {
+    key: { position: [-2.4, 0.9, 0.5], intensity: 2.6, color: "#ffeedd" },
+    fill: { position: [1.8, 0.3, 0.9], intensity: 0.06, color: "#e8ecf2" },
+    rim: { position: [1.6, 1.2, -1.6], intensity: 2.2, color: "#e8eeff" },
+    environmentIntensity: 0.22,
+    exposure: 1.35,
+    softMm: 1.5,
+  },
+};
+
+/** Put a preset's lights into LIGHTING and onto the scene. */
+export function applyLightPreset(name: LightPreset): void {
+  const p = LIGHT_PRESETS[name] ?? LIGHT_PRESETS.studio;
+  LIGHTING.key = { ...p.key };
+  LIGHTING.fill = { ...p.fill };
+  LIGHTING.rim = { ...p.rim };
+  LIGHTING.environmentIntensity = p.environmentIntensity;
+  LIGHTING.exposure = p.exposure;
+  LIGHTING.keyShadow.softMm = p.softMm;
+  lightingRig.apply();
+}
 
 /**
  * The key's shadow map for the current tier (none on low), once the head is revealed: the loader's bubble morph moves
@@ -209,9 +254,18 @@ export function Lighting() {
     if (keyLight) applyKeyShadow(keyLight);
     const offTier = onTier(() => keyLight && applyKeyShadow(keyLight));
     const offRevealed = subscribeRevealed(() => keyLight && applyKeyShadow(keyLight));
+    // the light preset (Style tab → Camera)
+    let preset = finishSettings.light;
+    if (preset !== "studio") applyLightPreset(preset);
+    const offPreset = onFinishChange(() => {
+      if (finishSettings.light === preset) return;
+      preset = finishSettings.light;
+      applyLightPreset(preset);
+    });
     return () => {
       offTier();
       offRevealed();
+      offPreset();
       for (const light of lights) scene.remove(light.target);
       lightingRig.lights = {};
     };

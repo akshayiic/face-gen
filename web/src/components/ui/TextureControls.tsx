@@ -105,7 +105,7 @@ export function HairTextureControl() {
   );
 }
 
-function UploadRow<S>({ title, hint, snap, onFile, onRemove }: { title: string; hint: string; snap: TextureSnapshot<S>; onFile: (f: File) => Promise<void>; onRemove: () => void }) {
+export function UploadRow<S>({ title, hint, snap, onFile, onRemove }: { title: string; hint: string; snap: TextureSnapshot<S>; onFile: (f: File) => Promise<void>; onRemove: () => void }) {
   const id = useId();
   return (
     <div className="px-5 py-2.5">

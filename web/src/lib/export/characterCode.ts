@@ -29,6 +29,11 @@ export interface CharacterFile {
   clothes?: Record<string, unknown>;
   /** lib/skinDetails.ts SkinDetails (blush, freckles, moles, pores); missing in older links (none). */
   skinDetails?: Record<string, unknown>;
+  /** lib/marks.ts: scars and marks on the rest skin; missing in older links (none). */
+  marks?: unknown[];
+  /** lib/sculpt.ts FineShape (local feature sliders, asymmetry); missing in older links (none). The sculpt itself is
+   *  far too big for a link: only the config file carries it. */
+  fineShape?: Record<string, unknown>;
 }
 
 /** Longest link payload we'll read: a full random face is ~1.5 KB, so anything far larger isn't ours. */
@@ -75,5 +80,7 @@ export function storageEntries(c: CharacterFile): Record<string, string> {
     [STORAGE_KEYS.eyes]: String(c.eyes),
     [STORAGE_KEYS.clothes]: JSON.stringify(c.clothes && typeof c.clothes === "object" ? c.clothes : { style: "none" }),
     [STORAGE_KEYS.skinDetails]: JSON.stringify(c.skinDetails && typeof c.skinDetails === "object" ? c.skinDetails : {}),
+    [STORAGE_KEYS.marks]: JSON.stringify(Array.isArray(c.marks) ? c.marks : []),
+    [STORAGE_KEYS.fineShape]: JSON.stringify(c.fineShape && typeof c.fineShape === "object" ? c.fineShape : {}),
   };
 }

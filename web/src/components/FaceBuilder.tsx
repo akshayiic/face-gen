@@ -117,6 +117,20 @@ if (debugHandle) {
     // the camera finish (lib/finish.ts FINISH loads with the canvas) and the hair's shadow on the skin
     finish: { settings: finishSettings, set: setFinish, FINISH: () => import("@/lib/finish").then((m) => m.FINISH) },
     hairShadow: { HAIR_SHADOW, uniforms: hairShadowUniforms, apply: applyHairShadow },
+    // skin realism (weathering, wrinkles), scars and marks, fine shape and sculpting: loaded on first use
+    realism: () =>
+      Promise.all([import("@/lib/skinDetails"), import("@/lib/marks"), import("@/lib/sculpt"), import("@/lib/skinPick")]).then(([d, mk, sc, pk]) => ({
+        setSkinDetails: d.setSkinDetails,
+        setMarks: mk.setMarks,
+        marks: () => mk.marks,
+        setFine: sc.setFine,
+        setSculptTool: sc.setSculptTool,
+        beginStroke: sc.beginStroke,
+        dab: sc.dab,
+        endStroke: sc.endStroke,
+        undoSculpt: sc.undoSculpt,
+        pickSkin: pk.pickSkin,
+      })),
     view,
     still: (on: boolean) => void (idleDebug.still = on),
     captureFace,

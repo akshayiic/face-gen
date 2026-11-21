@@ -4,7 +4,13 @@
  *  - depth of field: an 85 mm portrait lens focused on the eyes, so the ears, the hair behind and the shoulders soften
  *    by how far they are from the focus (a gather of up to 24 taps, which leaves sharp things sharp);
  *  - bloom: the brightest highlights glow a little (a half-size bright pass, its mip chain added back);
- *  - a colour grade (a little contrast, cool shadows and warm highlights), a vignette, and fine film grain.
+ *  - a colour grade (a little contrast, cool shadows and warm highlights), a vignette, and fine film grain;
+ *  - skin translucency: light scatters under real skin, softening its shading most in red (a separable subsurface blur
+ *    after Jimenez: two passes, a different width per colour channel, measured in millimetres on the face, only across
+ *    skin at the same depth, in linear light). The skin marks itself with alpha 0.5 while it is drawn into the finish's
+ *    target (skinUniforms.uSkinAlpha), so hair, brows and clothes over it are never smeared;
+ *  - clarity: local contrast (the image minus a wide blur of itself) and a fine sharpen, in the mid-tones: the crisp,
+ *    gritty look of a retouched portrait. None where the depth of field has blurred.
  *
  * The scene is first drawn into a multisampled target that three treats like the screen (flagged as an XR target: tone
  * mapping and the sRGB encoding happen in the materials, the background is cleared in display colour), so with every
@@ -38,6 +44,7 @@ import {
 import { eyeUniforms } from "@/lib/eyeShader";
 import { finishSettings } from "@/lib/finishSettings";
 import { tierSettings } from "@/lib/quality";
+import { skinUniforms } from "@/lib/skinShader";
 
 export const FINISH = {
   fNumber: 2.0, // the aperture at full "Depth of field" (f/2; the default half is f/4)
@@ -47,6 +54,12 @@ export const FINISH = {
   grain: 0.06, // the strongest grain (± display units in the mid-tones)
   vignette: 0.3, // the most the corners darken
   grade: 1, // the strongest grade
+  clarity: 1.4, // local contrast at full "Clarity" (× the image minus its wide blur)
+  sharpen: 1.6, // the fine sharpen at full "Clarity" (× the image minus its 4 neighbours)
+  // the subsurface blur's width per channel (standard deviation, mm on the face) at full "Skin translucency": red light
+  // travels furthest in skin, blue least (after d'Eon's and Jimenez's skin profiles)
+  sssMm: [1.4, 0.6, 0.35] as [number, number, number],
+  sssTaps: 7, // taps each side, per pass
 };
 
 const VERTEX = /* glsl */ `
@@ -67,13 +80,51 @@ void main() {
   gl_FragColor = vec4(c * k * subject, 1.0);
 }`;
 
+// One pass of the separable subsurface blur (uDir: one texel across or down). Skin is alpha 0.5; taps off the skin, or
+// on skin at another depth (the nose over the cheek), don't count.
+const SSS = /* glsl */ `
+#include <packing>
+uniform sampler2D tColor, tDepth;
+uniform vec2 uDir;
+uniform float uNear, uFar, uPxPerMm1m, uStrength;
+uniform vec3 uSigma;
+varying vec2 vUv;
+float skinMask(float a) { return 1.0 - smoothstep(0.06, 0.18, abs(a - 0.5)); }
+float viewZ(vec2 uv) { return -perspectiveDepthToViewZ(texture2D(tDepth, uv).r, uNear, uFar); }
+void main() {
+  vec4 c0 = texture2D(tColor, vUv);
+  float m0 = skinMask(c0.a);
+  if (m0 < 0.01) { gl_FragColor = c0; return; }
+  float z0 = viewZ(vUv);
+  float pxPerMm = uPxPerMm1m / max(z0, 0.05);
+  vec3 sum = pow(c0.rgb, vec3(2.2)), wsum = vec3(1.0);
+  for (int i = -${FINISH.sssTaps}; i <= ${FINISH.sssTaps}; i++) {
+    if (i == 0) continue;
+    float xmm = float(i) / ${FINISH.sssTaps}.0 * 2.5 * uSigma.r;
+    vec2 uv = vUv + uDir * xmm * pxPerMm;
+    vec4 s = texture2D(tColor, uv);
+    float ok = skinMask(s.a) * (1.0 - smoothstep(1.5, 5.0, abs(viewZ(uv) - z0) * 1000.0));
+    vec3 w = exp(-(xmm * xmm) / (2.0 * uSigma * uSigma)) * ok;
+    sum += pow(s.rgb, vec3(2.2)) * w;
+    wsum += w;
+  }
+  vec3 blurred = pow(sum / wsum, vec3(1.0 / 2.2));
+  gl_FragColor = vec4(mix(c0.rgb, blurred, m0 * uStrength), c0.a);
+}`;
+
+// The image into the half-size mipmapped target that clarity reads its wide blur from.
+const COPY = /* glsl */ `
+uniform sampler2D tColor;
+varying vec2 vUv;
+void main() { gl_FragColor = vec4(texture2D(tColor, vUv).rgb, 1.0); }`;
+
 const FINAL = /* glsl */ `
 #include <packing>
-uniform sampler2D tColor, tDepth, tBloom;
+uniform sampler2D tColor, tDepth, tBloom, tBlur;
 uniform vec2 uTexel;
 uniform float uNear, uFar, uFocus, uCocScale, uMaxCoc;
 uniform int uTaps;
-uniform float uBloom, uGrain, uVignette, uGrade, uAspect, uFrame;
+uniform float uBloom, uGrain, uVignette, uGrade, uAspect, uFrame, uClarity, uSharpen;
 varying vec2 vUv;
 
 // circle of confusion (px) at uv: a thin lens focused at uFocus; the backdrop counts as far away
@@ -91,12 +142,15 @@ float hash12(vec2 p) {
 
 void main() {
   vec3 c = texture2D(tColor, vUv).rgb;
+  vec3 sharp = c;
   float subject = step(texture2D(tDepth, vUv).r, 0.99999);
+  float focusKeep = 1.0; // how sharp this pixel stays under the depth of field (clarity follows it)
 
   // depth of field: gather round this pixel; a tap counts where its own blur reaches here, so a sharp face never
   // smears into a soft background and a soft background never covers a sharp face
   if (uTaps > 0) {
     float coc = cocAt(vUv);
+    focusKeep = 1.0 - smoothstep(0.5, 3.0, coc);
     if (coc > 0.5) {
       vec3 sum = c;
       float wsum = 1.0;
@@ -113,6 +167,20 @@ void main() {
       }
       c = sum / wsum;
     }
+  }
+
+  // clarity: the luminance detail of the sharp image (minus its wide blur, and minus its 4 neighbours) added back,
+  // mid-tones most, keeping the hue
+  if (uClarity > 0.0 || uSharpen > 0.0) {
+    const vec3 LUMA = vec3(0.2126, 0.7152, 0.0722);
+    float ls = dot(sharp, LUMA);
+    vec3 wide = textureLod(tBlur, vUv, 1.0).rgb * 0.5 + textureLod(tBlur, vUv, 2.5).rgb * 0.5;
+    vec3 near4 = 0.25 * (texture2D(tColor, vUv + vec2(uTexel.x, 0.0)).rgb + texture2D(tColor, vUv - vec2(uTexel.x, 0.0)).rgb
+                       + texture2D(tColor, vUv + vec2(0.0, uTexel.y)).rgb + texture2D(tColor, vUv - vec2(0.0, uTexel.y)).rgb);
+    float detail = uClarity * (ls - dot(wide, LUMA)) + uSharpen * (ls - dot(near4, LUMA));
+    float l = dot(c, LUMA);
+    float mid = clamp(4.0 * l * (1.0 - l), 0.0, 1.0);
+    c = clamp(c + c / max(l, 0.03) * clamp(detail, -0.2, 0.2) * mid * subject * focusKeep, 0.0, 1.0);
   }
 
   // bloom: the bright pass's mips, screened on (brightens without clipping)
@@ -146,6 +214,11 @@ void main() {
 type Rig = {
   scene: WebGLRenderTarget;
   bright: WebGLRenderTarget;
+  blur: WebGLRenderTarget; // half size, mipmapped: clarity's wide blur
+  sssA: WebGLRenderTarget; // the subsurface blur's two passes
+  sssB: WebGLRenderTarget;
+  sssMat: ShaderMaterial;
+  copyMat: ShaderMaterial;
   quad: Mesh;
   quadScene: Scene;
   quadCamera: OrthographicCamera;
@@ -173,16 +246,44 @@ function makeRig(w: number, h: number): Rig {
   geometry.setAttribute("position", new Float32BufferAttribute([-1, 3, 0, -1, -1, 0, 3, -1, 0], 3));
   geometry.setAttribute("uv", new Float32BufferAttribute([0, 2, 0, 0, 2, 0], 2));
   const scene = screenLikeTarget(w, h);
-  const bright = new WebGLRenderTarget(Math.max(1, w >> 1), Math.max(1, h >> 1), { type: UnsignedByteType, depthBuffer: false });
-  bright.texture.minFilter = LinearMipmapLinearFilter;
-  bright.texture.magFilter = LinearFilter;
-  bright.texture.generateMipmaps = true;
+  const half = () => {
+    const t = new WebGLRenderTarget(Math.max(1, w >> 1), Math.max(1, h >> 1), { type: UnsignedByteType, depthBuffer: false });
+    t.texture.minFilter = LinearMipmapLinearFilter;
+    t.texture.magFilter = LinearFilter;
+    t.texture.generateMipmaps = true;
+    return t;
+  };
+  const full = () => {
+    const t = new WebGLRenderTarget(w, h, { type: UnsignedByteType, depthBuffer: false });
+    t.texture.minFilter = t.texture.magFilter = LinearFilter;
+    t.texture.generateMipmaps = false;
+    return t;
+  };
+  const bright = half();
+  const blur = half();
+  const sssA = full();
+  const sssB = full();
   const common = { vertexShader: VERTEX, depthTest: false, depthWrite: false, toneMapped: false };
   const brightMat = new ShaderMaterial({
     ...common,
     fragmentShader: BRIGHT,
     uniforms: { tColor: { value: scene.texture }, tDepth: { value: scene.depthTexture }, uThreshold: { value: FINISH.bloomThreshold } },
   });
+  const sssMat = new ShaderMaterial({
+    ...common,
+    fragmentShader: SSS,
+    uniforms: {
+      tColor: { value: scene.texture },
+      tDepth: { value: scene.depthTexture },
+      uDir: { value: new Vector2() },
+      uNear: { value: 0.1 },
+      uFar: { value: 5 },
+      uPxPerMm1m: { value: 1 },
+      uStrength: { value: 0 },
+      uSigma: { value: new Vector3() },
+    },
+  });
+  const copyMat = new ShaderMaterial({ ...common, fragmentShader: COPY, uniforms: { tColor: { value: scene.texture } } });
   const finalMat = new ShaderMaterial({
     ...common,
     fragmentShader: FINAL,
@@ -190,6 +291,9 @@ function makeRig(w: number, h: number): Rig {
       tColor: { value: scene.texture },
       tDepth: { value: scene.depthTexture },
       tBloom: { value: bright.texture },
+      tBlur: { value: blur.texture },
+      uClarity: { value: 0 },
+      uSharpen: { value: 0 },
       uTexel: { value: new Vector2() },
       uNear: { value: 0.1 },
       uFar: { value: 5 },
@@ -209,7 +313,7 @@ function makeRig(w: number, h: number): Rig {
   quad.frustumCulled = false;
   const quadScene = new Scene();
   quadScene.add(quad);
-  return { scene, bright, quad, quadScene, quadCamera: new OrthographicCamera(-1, 1, 1, -1, 0, 1), brightMat, finalMat };
+  return { scene, bright, blur, sssA, sssB, sssMat, copyMat, quad, quadScene, quadCamera: new OrthographicCamera(-1, 1, 1, -1, 0, 1), brightMat, finalMat };
 }
 
 const eyeMid = new Vector3();
@@ -244,24 +348,62 @@ export function renderView(gl: WebGLRenderer, scene: Scene, camera: Camera): voi
   else if (rig.scene.width !== w || rig.scene.height !== h) {
     rig.scene.setSize(w, h);
     rig.bright.setSize(Math.max(1, w >> 1), Math.max(1, h >> 1));
+    rig.blur.setSize(Math.max(1, w >> 1), Math.max(1, h >> 1));
+    rig.sssA.setSize(w, h);
+    rig.sssB.setSize(w, h);
   }
   const s = finishSettings;
   const tier = tierSettings();
   const ratio = gl.getPixelRatio();
 
+  const cam = camera as PerspectiveCamera;
   const before = gl.getRenderTarget();
+  const sss = cam.isPerspectiveCamera ? s.skin : 0;
+  skinUniforms.uSkinAlpha.value = sss > 0 ? 0.5 : 1; // the skin marks itself for the blur (only in this target)
   gl.setRenderTarget(rig.scene);
-  gl.render(scene, camera);
+  try {
+    gl.render(scene, camera);
+  } finally {
+    skinUniforms.uSkinAlpha.value = 1;
+  }
+  const r = rig;
+  const pass = (material: ShaderMaterial, target: WebGLRenderTarget) => {
+    r.quad.material = material;
+    gl.setRenderTarget(target);
+    gl.render(r.quadScene, r.quadCamera);
+  };
 
+  // the subsurface blur, across and then down; everything after reads its result
+  let src = rig.scene.texture;
+  if (sss > 0) {
+    const su = rig.sssMat.uniforms;
+    su.uNear.value = cam.near;
+    su.uFar.value = cam.far;
+    su.uPxPerMm1m.value = h / (2 * Math.tan((cam.fov * Math.PI) / 360)) / 1000;
+    su.uStrength.value = Math.min(1, 0.4 + sss);
+    su.uSigma.value.set(...FINISH.sssMm).multiplyScalar(0.35 + 0.65 * sss);
+    su.tColor.value = rig.scene.texture;
+    su.uDir.value.set(1 / w, 0);
+    pass(rig.sssMat, rig.sssA);
+    su.tColor.value = rig.sssA.texture;
+    su.uDir.value.set(0, 1 / h);
+    pass(rig.sssMat, rig.sssB);
+    src = rig.sssB.texture;
+  }
+  if (s.clarity > 0) {
+    rig.copyMat.uniforms.tColor.value = src;
+    pass(rig.copyMat, rig.blur);
+  }
   const bloom = FINISH.bloom * s.bloom;
   if (bloom > 0) {
-    rig.quad.material = rig.brightMat;
-    gl.setRenderTarget(rig.bright);
-    gl.render(rig.quadScene, rig.quadCamera);
+    rig.brightMat.uniforms.tColor.value = src;
+    pass(rig.brightMat, rig.bright);
   }
 
   const u = rig.finalMat.uniforms;
-  const cam = camera as PerspectiveCamera;
+  u.tColor.value = src;
+  u.uClarity.value = FINISH.clarity * s.clarity;
+  u.uSharpen.value = FINISH.sharpen * s.clarity;
   u.uTexel.value.set(1 / w, 1 / h);
   u.uAspect.value = w / h;
   u.uBloom.value = bloom;
@@ -294,7 +436,12 @@ export function disposeFinish(): void {
   rig.scene.depthTexture?.dispose();
   rig.scene.dispose();
   rig.bright.dispose();
+  rig.blur.dispose();
+  rig.sssA.dispose();
+  rig.sssB.dispose();
   rig.brightMat.dispose();
+  rig.sssMat.dispose();
+  rig.copyMat.dispose();
   rig.finalMat.dispose();
   rig.quad.geometry.dispose();
   rig = null;

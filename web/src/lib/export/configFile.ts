@@ -1,6 +1,8 @@
 /**
- * The whole setup as one Markdown file (Save config / Import config): the character (the same data as a rebuild link),
- * the uploaded skin and hair textures with their settings, and the camera finish.
+ * The whole setup as one Markdown file (Save config / Import config): the character (the same data as a rebuild link:
+ * scars and marks and the fine shape included), the sculpt (lib/sculpt.ts: too big for a link, so in its own block at
+ * the end), the uploaded textures with their settings (skin, hair, and the scanned normal, roughness and cavity maps),
+ * and the camera finish and light.
  *
  * People read the tables; the app reads the JSON block back, and the texture images embedded at the end as data-URL
  * images (they show in any Markdown viewer). Importing writes the file into the sessionStorage entries a reload reads
@@ -9,7 +11,7 @@
  *
  * Pure: no app state (lib/export/config.ts reads the live setup and does the download and the import).
  */
-import { TEXTURE_KEYS, VIEW_KEYS } from "@/lib/storageKeys";
+import { SCULPT_KEY, TEXTURE_KEYS, VIEW_KEYS } from "@/lib/storageKeys";
 
 import { CHARACTER_FORMAT, checkCharacter, storageEntries, type CharacterFile } from "./characterCode";
 
@@ -37,6 +39,8 @@ export interface ConfigFile {
   textures?: Partial<Record<TextureSlot, TextureEntry>>;
   /** lib/finishSettings.ts; undefined: keep the tab's. */
   finish?: Record<string, unknown>;
+  /** lib/sculpt.ts encodeSculpt ("s1:…"); undefined: none (an imported character never keeps another face's sculpt). */
+  sculpt?: string;
 }
 
 /** Biggest file we'll read, and biggest embedded image (a 1024 px JPEG is ~0.2–0.5 MB as a data URL). */
@@ -45,8 +49,12 @@ const MAX_IMAGE_CHARS = 12_000_000;
 const IMAGE_URL = /^data:image\/(?:jpeg|png|webp);base64,[A-Za-z0-9+/=]+$/;
 const IMAGE_LINE = /!\[ftv:(\w+)-texture\]\((data:image\/[^)\s]+)\)/g;
 const JSON_BLOCK = /```json[^\n]*\r?\n([\s\S]*?)\r?\n```/g;
+const SCULPT_BLOCK = /```ftv-sculpt\r?\n(s1:[A-Za-z0-9+/=]+)\r?\n```/;
+const MAX_SCULPT_CHARS = 4_000_000;
 
-const SLOT_LABEL: Record<TextureSlot, string> = { skin: "Skin texture", hair: "Hair texture" };
+const SLOT_LABEL: Record<TextureSlot, string> = {
+  skin: "Skin texture", hair: "Hair texture", skinNormal: "Skin normal map", skinRough: "Skin roughness map", skinCavity: "Skin cavity map",
+};
 
 // --- writing ---------------------------------------------------------------------------------------------------------
 
@@ -60,7 +68,7 @@ const words = (id: unknown) => (typeof id === "string" && id ? id.replace(/[-_]/
 
 function textureSummary(slot: TextureSlot, e: TextureEntry): string {
   const s = e.settings;
-  if (slot === "hair") return `strength ${pct(s.amount)}`;
+  if (slot !== "skin") return `strength ${pct(s.amount)}`;
   const mode = s.mode === "uv" ? "painted map (UV)" : `skin photo, tiled every ${typeof s.scale === "number" ? Math.round(s.scale) : "?"} mm`;
   return `${mode}, strength ${pct(s.amount)}${s.keepTone === false ? ", its own colours" : ", keeps the skin tone"}`;
 }
@@ -126,9 +134,33 @@ export function configToMarkdown(c: ConfigFile, labels: Record<string, string> =
       ["Under the eyes", typeof d.underEye === "number" ? `×${d.underEye.toFixed(2)}` : "—"],
       ["Tone variation", typeof d.variation === "number" ? `×${d.variation.toFixed(2)}` : "—"],
       ["Veins", pct(d.veins)],
+      ["Wrinkles", pct(d.wrinkles)],
+      ["Expression lines", typeof d.expression === "number" ? `×${d.expression.toFixed(2)}` : "—"],
+      ["Sun damage", pct(d.sun)],
+      ["Sun spots", pct(d.sunSpots)],
+      ["Broken capillaries", pct(d.capillaries)],
+      ["Oiliness", typeof d.oiliness === "number" ? `×${d.oiliness.toFixed(2)}` : "—"],
+      ["Sweat", pct(d.sweat)],
+      ["Grime", pct(d.grime)],
     ]),
     "",
   );
+
+  const marks = Array.isArray(ch.marks) ? (ch.marks as Record<string, unknown>[]) : [];
+  out.push("## Scars and marks", "");
+  out.push(
+    marks.length
+      ? table(["Mark", "Size, healed"], marks.map((m, i) => [`${i + 1}. ${words(m.type)}`, `${typeof m.length === "number" ? Math.round(m.length) : "?"} mm, ${pct(m.healed)} healed`]))
+      : "None.",
+    "",
+  );
+
+  const fine = (ch.fineShape ?? {}) as { sliders?: Record<string, number>; asymmetry?: number };
+  const fineRows: [string, unknown][] = Object.entries(fine.sliders ?? {}).map(([k, v]) => [words(k.replace(/([A-Z])/g, " $1").toLowerCase()), num(v)]);
+  if (typeof fine.asymmetry === "number" && fine.asymmetry > 0) fineRows.push(["asymmetry", pct(fine.asymmetry)]);
+  fineRows.push(["sculpted by hand", c.sculpt ? "yes (in the sculpt block at the end)" : "no"]);
+  out.push("## Fine shape and sculpt", "");
+  out.push(table(["", ""], fineRows), "");
 
   out.push("## Textures", "");
   if (!c.textures) out.push("Not saved in this file.", "");
@@ -149,7 +181,10 @@ export function configToMarkdown(c: ConfigFile, labels: Record<string, string> =
     out.push("## Camera", "");
     out.push(
       table(["", ""], [
+        ["Light", words(f.light ?? "studio")],
         ["Photo finish", f.on === false ? "off" : "on"],
+        ["Skin translucency", pct(f.skin)],
+        ["Clarity", pct(f.clarity)],
         ["Depth of field", typeof f.focus === "number" && f.focus > 0 ? `f/${(2 / f.focus).toFixed(1)}` : "off"],
         ["Bloom", pct(f.bloom)],
         ["Colour grade", pct(f.grade)],
@@ -166,6 +201,7 @@ export function configToMarkdown(c: ConfigFile, labels: Record<string, string> =
     textures: c.textures
       ? Object.fromEntries(Object.entries(c.textures).map(([slot, e]) => [slot, { name: e.name, settings: e.settings, image: e.image ? "embedded below" : "not included" }]))
       : undefined,
+    sculpt: c.sculpt ? "embedded below" : undefined,
   };
   out.push("## Settings data", "");
   out.push("The app reads this block when you import the file (the tables above are for reading). Values it doesn't know are ignored and numbers are kept in range.", "");
@@ -175,6 +211,11 @@ export function configToMarkdown(c: ConfigFile, labels: Record<string, string> =
   if (images.length) {
     out.push("## Texture images", "");
     for (const slot of images) out.push(`${SLOT_LABEL[slot]} (${cell(c.textures![slot]!.name)}):`, "", `![ftv:${slot}-texture](${c.textures![slot]!.image})`, "");
+  }
+  if (c.sculpt) {
+    out.push("## Sculpt", "");
+    out.push("Hand sculpting: an offset for every skin vertex (the app reads it; not meant for reading).", "");
+    out.push("```ftv-sculpt", c.sculpt, "```", "");
   }
   return out.join("\n");
 }
@@ -204,14 +245,16 @@ export function configFromMarkdown(text: string): ConfigFile | null {
       return null;
     }
   }
+  const sm = text.length ? SCULPT_BLOCK.exec(text) : null;
+  const sculpt = sm && sm[1].length <= MAX_SCULPT_CHARS ? sm[1] : undefined;
   for (const raw of candidates) {
-    const c = readConfig(raw, images);
+    const c = readConfig(raw, images, sculpt);
     if (c) return c;
   }
   return null;
 }
 
-function readConfig(raw: unknown, images: Map<string, string>): ConfigFile | null {
+function readConfig(raw: unknown, images: Map<string, string>, sculpt?: string): ConfigFile | null {
   if (!isObject(raw)) return null;
   if (raw.format === CHARACTER_FORMAT) {
     const character = checkCharacter(raw);
@@ -231,6 +274,7 @@ function readConfig(raw: unknown, images: Map<string, string>): ConfigFile | nul
     }
   }
   if (isObject(raw.finish)) out.finish = raw.finish;
+  if (sculpt) out.sculpt = sculpt;
   return out;
 }
 
@@ -253,5 +297,7 @@ export function configStorage(c: ConfigFile): { set: Record<string, string>; rem
       if (e.image) set[key] = JSON.stringify({ name: e.name, url: e.image });
     }
   if (c.finish) set[VIEW_KEYS.finish] = JSON.stringify(c.finish);
+  if (c.sculpt) set[SCULPT_KEY] = c.sculpt;
+  else remove.push(SCULPT_KEY);
   return { set, remove };
 }

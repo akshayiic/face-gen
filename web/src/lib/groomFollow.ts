@@ -7,7 +7,7 @@ import { type DataTexture, Matrix3, type Matrix4 } from "three";
 
 import { sliders } from "@/lib/data";
 import { morphs } from "@/lib/morphs/store";
-import { skinOffsets, skinShape, skinSurface } from "@/lib/skinSurface";
+import { skinExtraVersion, skinOffsets, skinShape, skinSurface } from "@/lib/skinSurface";
 import { skinGrid, type SkinGrid, type Tie, tiePoints } from "@/lib/skinTie";
 
 /** A Map that notes whether set() was called since `changed` was last cleared (which morph weights moved this frame). */
@@ -75,6 +75,7 @@ export function followShapePoints(points: Float32Array, p: number, out: { tex: D
   let offs: Float32Array | null = null;
   const last = new Map<string, number>();
   const seen = new Map<string, number>(); // shape weights at the last write
+  let seenExtra = 0; // the sculpt's version at the last write (lib/sculpt.ts)
   const d = new Float32Array(count * 3);
   let rest: Float32Array | null = null; // the skin registration the sums belong to
   const update = () => {
@@ -92,6 +93,11 @@ export function followShapePoints(points: Float32Array, p: number, out: { tex: D
       offs.fill(0);
     }
     let changed = false;
+    const xv = skinExtraVersion();
+    if (xv !== seenExtra) {
+      seenExtra = xv;
+      changed = true;
+    }
     for (const t of SHAPE) {
       const w = morphs.effective(t);
       if ((seen.get(t) ?? 0) !== w) {

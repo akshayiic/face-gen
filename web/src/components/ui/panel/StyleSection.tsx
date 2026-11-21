@@ -11,6 +11,8 @@ import { EyeControl } from "@/components/ui/EyeControl";
 import { FinishControl } from "@/components/ui/FinishControl";
 import { HairControl } from "@/components/ui/HairControl";
 import { SkinControl } from "@/components/ui/SkinControl";
+import { MarksControl } from "@/components/ui/MarksControl";
+import { ScanMapsControl } from "@/components/ui/ScanMapsControl";
 import { SkinDetailsControl } from "@/components/ui/SkinDetailsControl";
 import { HairTextureControl, SkinTextureControl } from "@/components/ui/TextureControls";
 
@@ -24,7 +26,11 @@ export function StyleSection() {
         <SkinControl />
         <SkinDetailsControl />
         <SkinTextureControl />
+        <ScanMapsControl />
         <EyeControl />
+      </Block>
+      <Block title="Scars and marks">
+        <MarksControl />
       </Block>
       <Block title="Hair, brows and beard">
         <HairControl />

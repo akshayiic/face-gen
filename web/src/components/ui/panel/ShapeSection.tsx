@@ -13,6 +13,8 @@ import { canVary, onRandomChange, precomputeVariations, randomFace, randomFaceAs
 import { morphs } from "@/lib/morphs/store";
 import { MOTION } from "@/lib/motion";
 
+import { FineShapeControl, SculptControl } from "@/components/ui/SculptControls";
+
 import { AdvancedSection } from "./AdvancedSection";
 import { paintRange, rideRange, setRange, speakRange, stopRide } from "./rangeFill";
 import { Block, Group, Hint } from "./Group";
@@ -45,6 +47,12 @@ export function ShapeSection({ refs }: { refs: RowRefs }) {
             </Group>
           );
         })}
+      </Block>
+      <Block title="Fine shape">
+        <FineShapeControl />
+      </Block>
+      <Block title="Sculpt">
+        <SculptControl />
       </Block>
       <AdvancedSection refs={refs} />
     </>

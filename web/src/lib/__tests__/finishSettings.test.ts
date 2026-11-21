@@ -12,6 +12,9 @@ describe("finish settings", () => {
       grain: FINISH_DEFAULTS.grain,
       vignette: 0.2,
       grade: FINISH_DEFAULTS.grade,
+      clarity: FINISH_DEFAULTS.clarity,
+      skin: FINISH_DEFAULTS.skin,
+      light: FINISH_DEFAULTS.light,
     });
     expect(sanitizeFinish(null)).toEqual(FINISH_DEFAULTS);
     expect(sanitizeFinish({ on: false }).on).toBe(false);

@@ -26,6 +26,16 @@
  *    so the chosen tone, redness and lips stay; otherwise its own colours replace the tone.
  *  - Scalp under procedural hair: a per-vertex `aHairCover` (0..1, lib/groom.ts writes it from the strand roots) takes
  *    the skin towards the hair's root colour, so gaps between strands show hair-dark scalp, not bare skin.
+ *  - Weathering (lib/skinDetails.ts): sun damage (redder, browner, leathery skin where the sun reaches), sun spots,
+ *    broken capillaries on the nose and cheeks, how oily the T-zone is, sweat (a wet film and droplets) and grime (dirt
+ *    in the creases and in patches).
+ *  - Scars and marks (lib/marks.ts): up to MAX_MARKS decals on the rest skin, each projected from its own spot and
+ *    direction: scars (raised and pink when fresh, flat, pale and shiny when healed), cuts (blood, then scab), acne
+ *    pockmarks, burns and bruises. Each has its colour, height (bumped like the pores) and roughness.
+ *  - Scanned maps in the head's UV layout (lib/surfaceTextures.ts): a tangent-space normal map (tangents from the UVs'
+ *    screen derivatives), a roughness map and a cavity map, each with its own strength.
+ *  - Its alpha is uSkinAlpha: 0.5 only while the camera finish draws it (lib/finish.ts), to mark the skin for the
+ *    subsurface blur; 1 everywhere else.
  *
  * Nothing here changes the swatches: redness and translucency multiply whatever tone is chosen (lib/skin.ts).
  * The maps load after the head is on screen (Head.tsx); until then the skin is plain.
@@ -33,7 +43,7 @@
  */
 import { type BufferAttribute, Color, Float32BufferAttribute, type MeshPhysicalMaterial, RepeatWrapping, ShaderChunk, type Texture, Vector3, Vector4 } from "three";
 
-import { patchAgeShader } from "@/lib/age";
+import { patchAgeShader, updateExpressionWrinkles } from "@/lib/age";
 import { applyHairShadowTier, HAIR_SHADOW_DECL, hairAmbientChunk, hairLitChunk, hairShadowUniforms, updateHairShadowView } from "@/lib/hairShadow";
 import { tierSettings } from "@/lib/quality";
 import { skinRig } from "@/lib/skin";
@@ -95,6 +105,8 @@ const v3 = (a: number[]) => new Vector3(a[0], a[1], a[2]);
 
 /** The most moles the shader draws (a uniform array). */
 export const MAX_MOLES = 16;
+/** The most scars and marks it draws (lib/marks.ts). */
+export const MAX_MARKS = 12;
 
 export const skinUniforms = {
   uAoDirect: { value: SKIN_SHADE.aoDirect },
@@ -150,6 +162,28 @@ export const skinUniforms = {
   uLobes: { value: v3(SKIN_SHADE.lobes) },
   uSssNormal: { value: v3(SKIN_SHADE.sssNormal) },
   uShadowTint: { value: v3(SKIN_SHADE.shadowTint) },
+  // weathering (lib/skinDetails.ts): 0 = none; oiliness 1 = the shader's own
+  uSun: { value: 0 },
+  uSunSpots: { value: 0 },
+  uCapillaries: { value: 0 },
+  uOil: { value: 1 },
+  uSweat: { value: 0 },
+  uGrime: { value: 0 },
+  // scars and marks (lib/marks.ts): A = rest position (mm) + type, B = rest normal + angle (rad), C = length, width
+  // (mm), healing (0 fresh … 1 old), seed
+  uMarkA: { value: Array.from({ length: MAX_MARKS }, () => new Vector4()) },
+  uMarkB: { value: Array.from({ length: MAX_MARKS }, () => new Vector4()) },
+  uMarkC: { value: Array.from({ length: MAX_MARKS }, () => new Vector4()) },
+  uMarkCount: { value: 0 },
+  // scanned maps in the head's UV layout (lib/surfaceTextures.ts), drawn while the material has their define
+  uSkinNormalMap: { value: null as Texture | null },
+  uSkinNormalAmt: { value: 1 },
+  uSkinRoughMap: { value: null as Texture | null },
+  uSkinRoughAmt: { value: 1 },
+  uSkinCavityMap: { value: null as Texture | null },
+  uSkinCavityAmt: { value: 1 },
+  // 0.5 while the camera finish draws the skin (its subsurface blur's mask, lib/finish.ts), else 1
+  uSkinAlpha: { value: 1 },
 };
 
 /** Push SKIN_SHADE into the uniforms after editing it (debug handle; the oil sheen lives on the material). */
@@ -212,6 +246,17 @@ uniform float uSkinTexAmt, uSkinTexTile, uSkinTexMode, uSkinTexMatch;
 uniform vec3 uSkinTexMean;
 uniform float uMottle, uVeins, uCrease, uRoughVar, uCavity;
 uniform vec3 uCreaseTint, uLobes, uSssNormal, uShadowTint;
+uniform float uSun, uSunSpots, uCapillaries, uOil, uSweat, uGrime;
+uniform vec4 uMarkA[${MAX_MARKS}], uMarkB[${MAX_MARKS}], uMarkC[${MAX_MARKS}];
+uniform int uMarkCount;
+uniform sampler2D uSkinNormalMap, uSkinRoughMap, uSkinCavityMap;
+uniform float uSkinNormalAmt, uSkinRoughAmt, uSkinCavityAmt;
+uniform float uSkinAlpha;
+float markH = 0.0; // the marks' and sweat's height (mm), set in the colour step, bumped in the normal step
+float markRough = 1.0; // × roughness (scars shine, scabs are matte)
+float markSmooth = 0.0; // 0..1: no pores here (scar tissue)
+float weatherRough = 0.0; // roughness pushed towards grime's matte (> 0) or sweat's wet (< 0)
+float sweatWet = 0.0;
 varying float vHairCover;
 varying vec3 vSkinN;
 float skinMole = 0.0; // how much this is mole (0..1), set in the colour step, raised in the normal step
@@ -331,6 +376,135 @@ const REGIONS = /* glsl */ `
     vec3 moleC = mix(diffuseColor.rgb * vec3(0.32, 0.22, 0.17), vec3(0.035, 0.018, 0.012), 0.35);
     diffuseColor.rgb = mix(diffuseColor.rgb, moleC, skinMole);
   }
+  {
+    // weathering: where the sun reaches (the front of the face, nose, cheeks, forehead, ears' redness), the T-zone, the
+    // forehead, the nose and upper lip (sweat)
+    float front = smoothstep(55.0, 95.0, vRest.z);
+    float forehead = smoothstep(316.0, 328.0, vRest.y) * (1.0 - smoothstep(350.0, 362.0, vRest.y)) * (1.0 - smoothstep(38.0, 55.0, abs(vRest.x))) * front;
+    float nose = exp(-pow(vRest.x / 14.0, 2.0) - pow((vRest.y - 275.0) / 22.0, 2.0)) * front;
+    float lipTop = exp(-pow(vRest.x / 16.0, 2.0) - pow((vRest.y - 246.0) / 5.0, 2.0)) * front;
+    if (uSun > 0.0) {
+      float sunWhere = clamp(skinReg.g * 1.3 + 0.6 * forehead + 0.5 * front * smoothstep(200.0, 240.0, vRest.y), 0.0, 1.0) * (1.0 - skinLip);
+      float sunPatch = ageNoise(vRest * 0.07 + 9.0) * 0.7 + ageNoise(vRest * 0.3 + 2.0) * 0.3;
+      diffuseColor.rgb *= mix(vec3(1.0), vec3(0.9, 0.7, 0.62), uSun * sunWhere * (0.35 + 0.65 * sunPatch));
+    }
+    if (uSunSpots > 0.0) {
+      float spotWhere = clamp(0.8 * front * smoothstep(240.0, 270.0, vRest.y) + forehead + 0.5 * smoothstep(40.0, 60.0, abs(vRest.x)) * smoothstep(280.0, 300.0, vRest.y), 0.0, 1.0) * (1.0 - skinLip);
+      float sp = skinSpots(vRest, clamp(spotWhere * uSunSpots * 0.55, 0.0, 0.6));
+      diffuseColor.rgb *= mix(vec3(1.0), vec3(0.7, 0.55, 0.42), sp * (0.5 + 0.5 * uSunSpots));
+    }
+    if (uCapillaries > 0.0) {
+      vec3 cp = vRest * 0.2;
+      cp += vec3(ageNoise(cp * 1.9 + 3.0), ageNoise(cp * 1.9 + 13.0), ageNoise(cp * 1.9 + 29.0)) * 1.1;
+      float cap = pow(max(1.0 - abs(ageNoise(cp) * 2.0 - 1.0), 0.8 * (1.0 - abs(ageNoise(cp * 2.3 + 7.0) * 2.0 - 1.0))), 22.0);
+      vec2 ck = vec2(abs(vRest.x) - 38.0, vRest.y - 276.0);
+      float capWhere = max(exp(-pow((abs(vRest.x) - 12.0) / 9.0, 2.0) - pow((vRest.y - 266.0) / 12.0, 2.0)), exp(-dot(ck, ck) / (2.0 * 12.0 * 12.0))) * front;
+      diffuseColor.rgb *= mix(vec3(1.0), vec3(1.0, 0.5, 0.52), clamp(cap * capWhere * uCapillaries * 1.4, 0.0, 0.85));
+    }
+    if (uSweat > 0.0) {
+      float wet = clamp(forehead + 0.8 * nose + 0.8 * lipTop + 0.25 * front, 0.0, 1.0) * uSweat;
+      sweatWet = wet;
+      markH += skinDroplets(vRest, clamp(0.5 * wet, 0.0, 0.5)) * 0.1;
+      diffuseColor.rgb *= 1.0 - 0.08 * wet;
+      weatherRough -= wet;
+    }
+    if (uGrime > 0.0) {
+      float dirtPatch = smoothstep(0.35, 0.85, ageNoise(vRest * 0.05 + 21.0) * 0.7 + ageNoise(vRest * 0.21 + 4.0) * 0.3);
+      float g = uGrime * clamp(0.6 * dirtPatch + 1.1 * (1.0 - skinReg.r) + 0.12, 0.0, 1.0) * (1.0 - 0.6 * skinLip);
+      diffuseColor.rgb *= mix(vec3(1.0), vec3(0.58, 0.5, 0.43), g * 0.85);
+      weatherRough += g;
+    }
+  }
+  for (int i = 0; i < ${MAX_MARKS}; i++) {
+    // scars and marks: each a decal projected along its rest normal from its spot (u along it, v across, in mm)
+    if (i >= uMarkCount) break;
+    vec4 A = uMarkA[i], B = uMarkB[i], C = uMarkC[i];
+    vec3 d = vRest - A.xyz;
+    float L = C.x, W = C.y, healed = C.z, seed = C.w;
+    float reach = 0.5 * L + W + 6.0;
+    if (dot(d, d) > reach * reach) continue;
+    vec3 n = B.xyz;
+    if (abs(dot(d, n)) > 9.0) continue; // the other side of a thin part (an ear, the nose)
+    vec3 t0 = normalize(abs(n.y) < 0.95 ? cross(vec3(0.0, 1.0, 0.0), n) : cross(vec3(1.0, 0.0, 0.0), n));
+    vec3 t = cos(B.w) * t0 + sin(B.w) * cross(n, t0);
+    float u = dot(d, t), v = dot(d, cross(n, t));
+    int type = int(A.w + 0.5);
+    vec3 grey = vec3(dot(diffuseColor.rgb, vec3(0.3, 0.59, 0.11)));
+    if (type == 0 || type == 1) {
+      // 0 scar, 1 cut: a meandering line, tapering to its ends
+      float s = u / (0.5 * L);
+      if (abs(s) > 1.15) continue;
+      float wig = (ageNoise(vec3(u * (type == 0 ? 0.18 : 0.25), seed, 1.0)) - 0.5) * W * (type == 0 ? 1.2 : 0.8);
+      float taper = sqrt(clamp(1.0 - s * s, 0.0, 1.0));
+      float hw = 0.5 * W * taper * (type == 0 ? 0.7 + 0.6 * ageNoise(vec3(u * 0.5, seed, 3.0)) : 1.0);
+      float dv = abs(v - wig);
+      if (type == 0) {
+        float core = 1.0 - smoothstep(hw * 0.55, hw + 0.15, dv);
+        float halo = exp(-pow(dv / (hw + 2.5), 2.0)) * taper;
+        vec3 fresh = diffuseColor.rgb * vec3(1.0, 0.58, 0.58);
+        vec3 old = mix(diffuseColor.rgb, grey * vec3(1.2, 1.06, 1.0) + 0.02, 0.6); // paler: scar tissue has less pigment
+        diffuseColor.rgb = mix(diffuseColor.rgb, mix(fresh, old, healed), core);
+        diffuseColor.rgb *= mix(vec3(1.0), vec3(1.0, 0.84, 0.84), halo * (1.0 - healed) * 0.6);
+        // a raised ridge when fresh, flat and a little sunken once healed; stitch marks across a healed one
+        float stitch = (1.0 - smoothstep(0.35, 0.6, abs(fract(u / 4.0 + seed) - 0.5) * 4.0)) * (1.0 - smoothstep(hw + 1.2, hw + 2.2, dv)) * taper * step(0.5, fract(seed * 0.37));
+        markH += core * mix(0.2, -0.07, healed) + halo * 0.03 * (1.0 - healed) - stitch * 0.05;
+        diffuseColor.rgb = mix(diffuseColor.rgb, mix(diffuseColor.rgb * vec3(1.0, 0.7, 0.7), old, healed), stitch * 0.6);
+        markRough *= mix(1.0, 0.7, core);
+        markSmooth = max(markSmooth, core);
+      } else {
+        float gaps = smoothstep(0.25, 0.45, ageNoise(vec3(u * 0.35, seed, 9.0)));
+        float core = (1.0 - smoothstep(hw * 0.4, hw, dv)) * gaps;
+        float swell = exp(-pow(dv / (hw + 2.0), 2.0)) * taper;
+        diffuseColor.rgb = mix(diffuseColor.rgb, mix(vec3(0.3, 0.025, 0.02), vec3(0.17, 0.065, 0.04), healed), core * 0.92);
+        diffuseColor.rgb *= mix(vec3(1.0), vec3(1.0, 0.68, 0.66), swell * 0.7 * (1.0 - 0.5 * healed));
+        markH += core * mix(-0.12, 0.06, healed) + swell * 0.05;
+        markRough = mix(markRough, mix(0.35, 1.25, healed), core); // wet blood, then a matte scab
+        markSmooth = max(markSmooth, core);
+      }
+    } else if (type == 2) {
+      // pockmarks: a cluster of pits (L across, each about W)
+      float rr = length(vec2(u, v)) / (0.5 * L) + 0.3 * (ageNoise(vec3(u * 0.2, v * 0.2, seed)) - 0.5);
+      if (rr > 1.2) continue;
+      float fall = 1.0 - smoothstep(0.6, 1.1, rr);
+      vec2 g = vec2(u, v) / max(W * 1.6, 0.5);
+      vec2 gi = floor(g);
+      float pit = 0.0;
+      for (int px = -1; px <= 1; px++)
+        for (int py = -1; py <= 1; py++) {
+          vec2 c = gi + vec2(float(px), float(py));
+          vec3 h = skinHash3(vec3(c, seed));
+          if (h.z > 0.55) continue;
+          pit = max(pit, 1.0 - smoothstep(0.5, 1.0, length(g - c - h.xy) / (0.25 + 0.2 * h.x)));
+        }
+      pit *= fall;
+      markH -= pit * 0.14;
+      diffuseColor.rgb *= mix(vec3(1.0), mix(vec3(0.85, 0.62, 0.6), vec3(0.93, 0.89, 0.88), healed), pit * 0.6);
+      markSmooth = max(markSmooth, pit * 0.5);
+    } else if (type == 3) {
+      // burn: a ragged patch, mottled (pink when fresh; pale and dark patches once healed), uneven and shiny
+      float ang = atan(v, u);
+      float edge = 0.5 * L * (0.75 + 0.35 * ageNoise(vec3(cos(ang) * 1.5, sin(ang) * 1.5, seed)));
+      float inside = 1.0 - smoothstep(edge - 1.5, edge + 0.5, length(vec2(u, v)));
+      if (inside <= 0.0) continue;
+      float mott = ageNoise(vRest * 0.35 + seed);
+      vec3 fresh = diffuseColor.rgb * mix(vec3(1.0, 0.55, 0.52), vec3(0.85, 0.4, 0.38), mott);
+      vec3 old = mix(grey * vec3(1.25, 1.08, 1.02) + 0.03, diffuseColor.rgb * vec3(0.8, 0.62, 0.55), smoothstep(0.35, 0.65, mott));
+      diffuseColor.rgb = mix(diffuseColor.rgb, mix(fresh, old, healed), inside);
+      markH += inside * ((ageNoise(vRest * 0.9 + seed * 2.0) - 0.5) * 0.25 + 0.05);
+      markRough = mix(markRough, 0.6, inside);
+      markSmooth = max(markSmooth, inside);
+    } else {
+      // bruise: a soft blotch, purple-blue when fresh, yellow-green as it heals
+      float rr = length(vec2(u, v * 1.2)) / (0.5 * L) + 0.35 * (ageNoise(vRest * 0.12 + seed) - 0.5);
+      float blot = 1.0 - smoothstep(0.3, 1.0, rr);
+      if (blot <= 0.0) continue;
+      diffuseColor.rgb *= mix(vec3(1.0), mix(vec3(0.62, 0.42, 0.62), vec3(0.98, 0.92, 0.62), healed), blot * 0.85);
+      markH += blot * 0.04 * (1.0 - healed);
+    }
+  }
+#ifdef USE_SKIN_CAVITY_MAP
+  diffuseColor.rgb *= mix(1.0, texture2D(uSkinCavityMap, vAoMapUv).r, 0.5 * uSkinCavityAmt);
+#endif
 #ifdef USE_STUBBLE
   {
     // stubble: the mask says where (and how patchy), the follicle texture (on the rest position from three sides, like
@@ -362,19 +536,40 @@ const ROUGHNESS = /* glsl */ `
   roughnessFactor = mix(roughnessFactor, 0.92, stubbleRough); // stubble is matte
   roughnessFactor = mix(roughnessFactor, uLipRough, skinLip);
   roughnessFactor *= 1.0 + uRoughVar * (ageNoise(vRest * 0.3 + 5.0) - 0.5) * 2.0;
+#ifdef USE_SKIN_ROUGH_MAP
+  roughnessFactor = mix(roughnessFactor, texture2D(uSkinRoughMap, vAoMapUv).g, uSkinRoughAmt);
+#endif
+  // oiliness: 1 is the regions' own T-zone; more spreads it and makes it shinier, 0 is matte all over
+  roughnessFactor = mix(roughnessFactor, uRoughDry, clamp(1.0 - uOil, 0.0, 1.0) * skinReg.b);
+  roughnessFactor *= 1.0 - 0.3 * clamp(uOil - 1.0, 0.0, 1.0) * smoothstep(0.3, 0.7, skinReg.b);
+  roughnessFactor = weatherRough > 0.0 ? mix(roughnessFactor, 0.92, clamp(weatherRough, 0.0, 1.0) * 0.6)
+                                       : mix(roughnessFactor, 0.22, clamp(-weatherRough, 0.0, 1.0) * 0.7);
+  roughnessFactor = clamp(roughnessFactor * markRough, 0.08, 1.0);
 #endif
 `;
 
 const OIL = /* glsl */ `
 #include <lights_physical_fragment>
 #ifdef USE_CLEARCOAT
-  material.clearcoat *= mix(skinReg.b * skinReg.b, uLipSheen, skinLip); // the oily T-zone, and moist lips
+  material.clearcoat *= mix(skinReg.b * skinReg.b * uOil, uLipSheen, skinLip); // the oily T-zone, and moist lips
+  material.clearcoat = max(material.clearcoat, 0.6 * sweatWet); // a film of sweat
 #endif
 `;
 
 const DETAIL = /* glsl */ `
 #include <normal_fragment_maps>
 skinSmoothN = normal; // before pores and wrinkles (lib/age.ts adds the wrinkles after this step)
+#if defined(USE_SKIN_NORMAL_MAP) && defined(USE_AOMAP)
+{
+  // a scanned normal map in the head's UVs: its pores and wrinkles (the red channel's smooth normal stays smooth)
+  vec3 mapN = texture2D(uSkinNormalMap, vAoMapUv).xyz * 2.0 - 1.0;
+  mapN.xy *= uSkinNormalAmt;
+  normal = skinPerturbUv(-vViewPosition, normal, vAoMapUv, mapN, faceDirection);
+}
+#endif
+#if defined(USE_SKIN_CAVITY_MAP) && defined(USE_AOMAP)
+skinCavity *= mix(1.0, texture2D(uSkinCavityMap, vAoMapUv).r, uSkinCavityAmt);
+#endif
 #ifdef SKIN_DETAIL
 {
   vec3 w = pow(abs(normalize(vSkinN)), vec3(4.0));
@@ -383,11 +578,14 @@ skinSmoothN = normal; // before pores and wrinkles (lib/age.ts adds the wrinkles
   float hd = texture2D(uSkinDetail, q.zy).r * w.x + texture2D(uSkinDetail, q.xz).r * w.y + texture2D(uSkinDetail, q.xy).r * w.z;
   // pores on the face only (oiliness above the scalp/neck's 0.3), none on thin skin (ears, eyelids), few on the lips
   float depth = uDetailDepth * uPores * smoothstep(0.3, 0.6, skinReg.b) * skinReg.a * (1.0 - 0.7 * smoothstep(0.7, 0.95, skinReg.g));
+  depth *= (1.0 - markSmooth) * (1.0 + 0.8 * uSun); // none in scar tissue; deeper in sun-damaged skin
   normal = ageBump(-vViewPosition, normal, (hd - 0.5) * depth, faceDirection);
   // the pits hide the shine: no highlight at the bottom of a pore
-  skinCavity = mix(1.0, smoothstep(0.1, 0.5, hd), clamp(depth / max(uDetailDepth, 1e-4), 0.0, 1.0) * uCavity);
+  skinCavity *= mix(1.0, smoothstep(0.1, 0.5, hd), clamp(depth / max(uDetailDepth, 1e-4), 0.0, 1.0) * uCavity);
 }
 #endif
+// scars, cuts, burns and sweat droplets (heights from the colour step); a uniform test, so the derivatives stay valid
+if (uMarkCount > 0 || uSweat > 0.0) normal = ageBump(-vViewPosition, normal, markH, faceDirection);
 #ifdef USE_STUBBLE
 normal = ageBump(-vViewPosition, normal, stubbleH * ${SKIN_SHADE.stubbleBump.toFixed(3)}, faceDirection);
 #endif
@@ -398,6 +596,61 @@ const SCALP = /* glsl */ `
 #include <alphamap_fragment>
 vec3 scalpC = sRGBTransferEOTF(vec4(uScalpColour, 1.0)).rgb * uScalpDarken;
 diffuseColor.rgb = mix(diffuseColor.rgb, scalpC, clamp(vHairCover, 0.0, 1.0) * uScalp);
+`;
+
+// Helpers for the weathering and the scanned maps: after DECL and lib/age.ts, so skinHash3 and ageNoise exist
+// (installSkinShader puts them just before main).
+const HELPERS = /* glsl */ `
+// Sun spots: one candidate per 6 mm cell (like the freckles, bigger, with ragged edges).
+float skinSpots(vec3 p, float density) {
+  vec3 g = p / 6.0;
+  vec3 i = floor(g);
+  float f = 0.0;
+  for (int x = -1; x <= 1; x++)
+    for (int y = -1; y <= 1; y++)
+      for (int z = -1; z <= 1; z++) {
+        vec3 c = i + vec3(float(x), float(y), float(z));
+        vec3 h = skinHash3(c + 7.7);
+        if (fract(h.x * 13.7 + h.z * 5.1) > density) continue;
+        float r = 0.16 + 0.22 * fract(h.y * 9.3);
+        float d = length(g - c - h) + (ageNoise(p * 0.9 + h * 50.0) - 0.5) * 0.18;
+        f = max(f, (1.0 - smoothstep(r * 0.45, r, d)) * (0.5 + 0.5 * fract(h.z * 3.3)));
+      }
+  return f;
+}
+// Sweat: droplets 0.3–0.8 mm across, one candidate per 2.5 mm cell; returns the droplet's dome (0..1).
+float skinDroplets(vec3 p, float density) {
+  vec3 g = p / 2.5;
+  vec3 i = floor(g);
+  float hgt = 0.0;
+  for (int x = -1; x <= 1; x++)
+    for (int y = -1; y <= 1; y++)
+      for (int z = -1; z <= 1; z++) {
+        vec3 c = i + vec3(float(x), float(y), float(z));
+        vec3 h = skinHash3(c + 3.3);
+        if (fract(h.y * 7.1 + h.x * 2.3) > density) continue;
+        float r = 0.06 + 0.12 * fract(h.z * 5.7);
+        float d = length(g - c - h) / r;
+        if (d < 1.0) hgt = max(hgt, sqrt(1.0 - d * d));
+      }
+  return hgt;
+}
+// Tangent frame from the UVs' screen derivatives (no tangent attribute), for the scanned normal map.
+vec3 skinPerturbUv(vec3 eyePos, vec3 n, vec2 uv, vec3 mapN, float faceDir) {
+  vec3 q0 = dFdx(eyePos), q1 = dFdy(eyePos);
+  vec2 st0 = dFdx(uv), st1 = dFdy(uv);
+  vec3 q1perp = cross(q1, n), q0perp = cross(n, q0);
+  vec3 T = q1perp * st0.x + q0perp * st1.x;
+  vec3 B = q1perp * st0.y + q0perp * st1.y;
+  float det = max(dot(T, T), dot(B, B));
+  float scale = det == 0.0 ? 0.0 : faceDir * inversesqrt(det);
+  return normalize(T * (mapN.x * scale) + B * (mapN.y * scale) + n * mapN.z);
+}
+`;
+
+const ALPHA = /* glsl */ `
+#include <dithering_fragment>
+gl_FragColor.a = uSkinAlpha;
 `;
 
 const AO_DIRECT = /* glsl */ `
@@ -457,8 +710,11 @@ export function installSkinShader(material: MeshPhysicalMaterial): void {
   material.onBeforeCompile = (shader) => {
     patchAgeShader(shader); // first: the patches below build on its vRest, ageNoise and ageBump
     Object.assign(shader.uniforms, skinUniforms, hairShadowUniforms);
-    shader.vertexShader = "attribute float aHairCover;\nvarying float vHairCover;\nvarying vec3 vSkinN;\n" +
-      shader.vertexShader.replace("#include <uv_vertex>", "#include <uv_vertex>\nvHairCover = aHairCover;\nvSkinN = normal;");
+    // aSculpt: the sculpt and fine-shape offset (lib/sculpt.ts), before the morphs; vRest stays on the rest position
+    shader.vertexShader = "attribute float aHairCover;\nattribute vec3 aSculpt;\nvarying float vHairCover;\nvarying vec3 vSkinN;\n" +
+      shader.vertexShader
+        .replace("#include <uv_vertex>", "#include <uv_vertex>\nvHairCover = aHairCover;\nvSkinN = normal;")
+        .replace("#include <begin_vertex>", "#include <begin_vertex>\ntransformed += aSculpt;");
     shader.fragmentShader = DECL + HAIR_SHADOW_DECL + shader.fragmentShader
       .replace("#include <color_fragment>", REGIONS)
       .replace("#include <roughnessmap_fragment>", ROUGHNESS)
@@ -467,11 +723,17 @@ export function installSkinShader(material: MeshPhysicalMaterial): void {
       .replace("#include <lights_physical_pars_fragment>", PHYSICAL_PARS)
       .replace("#include <lights_fragment_begin>", hairLitChunk("vRest", SKIN_SHADOW))
       .replace("#include <aomap_fragment>", AO_DIRECT)
-      .replace("#include <alphamap_fragment>", SCALP);
+      .replace("#include <alphamap_fragment>", SCALP)
+      .replace("#include <dithering_fragment>", ALPHA)
+      .replace("void main() {", HELPERS + "void main() {");
   };
-  material.customProgramCacheKey = () => "skin-v13";
+  material.customProgramCacheKey = () => "skin-v14";
   // the hair's shadow (lib/hairShadow.ts): head-space matrices for the camera drawing it, on the tiers that have it
-  material.onBeforeRender = (_r, _s, camera) => updateHairShadowView(camera);
+  // and the expression's wrinkles (lib/age.ts), from the weights the face shows this frame
+  material.onBeforeRender = (_r, _s, camera) => {
+    updateHairShadowView(camera);
+    updateExpressionWrinkles();
+  };
   applyHairShadowTier(material);
 }
 
