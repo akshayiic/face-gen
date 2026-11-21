@@ -23,6 +23,7 @@ import {
   type Object3D,
   RedFormat,
   ShaderChunk,
+  type ShaderMaterial,
   UnsignedByteType,
   Vector3,
 } from "three";
@@ -170,6 +171,13 @@ export function registerHairShadow(group: Object3D, source: HairShadowSource): (
   };
 }
 
+/** A registered group's strands moved (lib/hairShape.ts: tied back, more volume): rebuild the volume from `source`. */
+export function updateHairShadow(group: Object3D, source: HairShadowSource): void {
+  if (!sources.has(group)) return;
+  sources.set(group, source);
+  shown = ""; // differs from any stage: the next view update rebuilds
+}
+
 const onStage = (o: Object3D): boolean => {
   let n: Object3D | null = o;
   while (n) {
@@ -295,10 +303,10 @@ export const hairAmbientChunk = (normal: string) => /* glsl */ `
 
 // --- which materials have it on --------------------------------------------------------------------------------------
 
-const materials = new Set<MeshPhysicalMaterial>();
+const materials = new Set<MeshPhysicalMaterial | ShaderMaterial>();
 
 /** USE_HAIR_SHADOW on the materials that take it, for the current tier (one recompile when it changes). */
-export function applyHairShadowTier(material: MeshPhysicalMaterial): void {
+export function applyHairShadowTier(material: MeshPhysicalMaterial | ShaderMaterial): void {
   materials.add(material);
   const on = tierSettings().hairShadow;
   if (on === (material.defines?.USE_HAIR_SHADOW !== undefined)) return;
@@ -308,6 +316,11 @@ export function applyHairShadowTier(material: MeshPhysicalMaterial): void {
   material.needsUpdate = true;
 }
 onTier(() => materials.forEach(applyHairShadowTier));
+
+/** A material that is going away (a hair style swapped out): stop following the tier for it. */
+export function releaseHairShadowTier(material: MeshPhysicalMaterial | ShaderMaterial): void {
+  materials.delete(material);
+}
 
 /**
  * Hair shadows on a plain physical material (the clothes): its world position into head space, the light loop and the

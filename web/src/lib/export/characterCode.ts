@@ -21,7 +21,8 @@ export interface CharacterFile {
   emotion: string;
   intensity: number;
   pose: Record<string, number>; // headYaw, headPitch, headRoll, gazeYaw, gazePitch (degrees)
-  hair: { style: string; colour: string };
+  /** style and colour, and how it is worn (lib/hair.ts HairWear; missing in older links: as filed) */
+  hair: { style: string; colour: string; tie?: string; framing?: boolean; volume?: number; frizz?: number; shine?: number };
   addons: Record<string, string>; // eyebrows, eyelashes, facialHair, glasses, facialHairColour
   skin: string;
   eyes: string;

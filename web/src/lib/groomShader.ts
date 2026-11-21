@@ -1,8 +1,12 @@
 /**
  * The strand shaders (lib/groom.ts buildGroom). Vertex: one camera-facing ribbon per strand, at least ~1 px wide and
  * faded by how much of that pixel the strand really covers, child strands placed round their parent, the roots moved
- * with the skin and lashes turned with the lid. Fragment: Kajiya-Kay hair lighting from the scene's directional lights,
- * the baked self-shadow and the root → tip colour ramp.
+ * with the skin and lashes turned with the lid, and frizz: strands wandering off their line towards the tips and a few
+ * flying away from the head (uFrizz, head hair). Fragment: Kajiya-Kay hair lighting from the scene's directional lights,
+ * the baked self-shadow and the root → tip colour ramp; on the tiers with the hair's shadow volume (lib/hairShadow.ts)
+ * the light reaching each strand through the hair in front of it and the sky the hair round it hides (so tied-back or
+ * fuller hair shades right); light shining through backlit strands (uTT); glints along the secondary highlight; and a
+ * shine control (uShine).
  */
 
 export const VERTEX = /* glsl */ `
@@ -37,6 +41,8 @@ varying float vRand;
 varying vec3 vTan;
 varying vec3 vViewPos;
 uniform float uRampLen;
+uniform float uFrizz;
+varying vec3 vHead; // head space, mm (the hair's shadow volume)
 
 vec4 fetchP(int s, int k) {
   int i = s * uPoints + k;
@@ -98,6 +104,17 @@ void main() {
     float far = clamp(distance(P.xyz, fetchP(s, 0).xyz) / 0.12, 0.0, 1.0); // wobble by real length, not by t
     pos += n1 * sin(t * (5.0 + 6.0 * hash(id + 5.3)) + hash(id + 7.7) * 6.2831853) * uChildR * 0.3 * far * far;
   }
+  if (uFrizz > 0.0) {
+    // frizz: every strand wanders off its line, more towards the tip; a few fly away from the head
+    float fl = clamp(distance(P.xyz, fetchP(s, 0).xyz) / 0.12, 0.0, 1.0);
+    vec3 out2 = normalize(P.xyz - uCentre);
+    vec3 m1 = normalize(cross(T, out2));
+    vec3 m2 = cross(m1, T);
+    float fz = uFrizz * 0.0035 * fl * (0.4 + hash(id + 13.0));
+    pos += (m1 * sin(t * 31.0 + hash(id + 2.0) * 6.2831853) + m2 * cos(t * 23.0 + hash(id + 4.0) * 6.2831853)) * fz;
+    if (hash(id + 19.0) < 0.08 * uFrizz) pos += out2 * uFrizz * 0.025 * fl * fl * (0.4 + hash(id + 23.0));
+  }
+  vHead = pos * 1000.0;
   vec4 mv = modelViewMatrix * vec4(pos, 1.0);
   vec3 tv = normalize((modelViewMatrix * vec4(T, 0.0)).xyz);
   vec3 side = normalize(cross(tv, normalize(-mv.xyz)));
@@ -127,6 +144,9 @@ uniform vec3 uSky;
 uniform vec3 uGround;
 uniform vec3 uUpView;
 uniform float uDiffuse, uSpec1, uSpec2, uShift1, uShift2, uExp1, uExp2, uJitter, uShadowFloor, uTipFade, uTipSpec, uRampAmount;
+uniform float uShine, uTT, uGlint;
+uniform vec3 uCentre;
+varying vec3 vHead;
 varying float vT;
 varying float vRamp;
 varying float vLong;
@@ -152,18 +172,34 @@ void main() {
   vec3 V = normalize(-vViewPos);
   vec3 N = normalize(V - T * dot(V, T));
   float shade = mix(uShadowFloor, 1.0, vShade);
-  vec3 colour = albedo * mix(uGround, uSky, 0.5 + 0.5 * dot(N, uUpView)) * shade;
+  float occ = 1.0;
+  #ifdef USE_HAIR_SHADOW
+  // the volume does the shadowing: the baked shade counts half (they'd darken twice), plus the sky the hair hides
+  shade = mix(uShadowFloor, 1.0, mix(vShade, 1.0, 0.5));
+  vec3 outward = normalize(vHead - uCentre * 1000.0);
+  occ = hairAmbient(vHead + outward * 2.0, outward);
+  #endif
+  vec3 colour = albedo * mix(uGround, uSky, 0.5 + 0.5 * dot(N, uUpView)) * shade * occ;
+  // glints: the secondary highlight sparkles along the strand (its scales catch the light unevenly)
+  float glint = mix(1.0, 0.35 + 1.3 * fract(sin(floor(vT * 36.0 + vRand * 91.0) * 12.9898) * 43758.5453), uGlint);
   #if NUM_DIR_LIGHTS > 0
   for (int i = 0; i < NUM_DIR_LIGHTS; i++) {
     vec3 L = directionalLights[i].direction;
     vec3 Lc = directionalLights[i].color;
+    #ifdef USE_HAIR_SHADOW
+    vec3 Lh = normalize(uViewToHead * L);
+    Lc *= hairTransmit(vHead + Lh * 3.0, Lh); // the hair in front of this strand, towards the light
+    #endif
     float tl = dot(T, L);
     float diff = sqrt(max(0.0, 1.0 - tl * tl)) * (0.35 + 0.65 * clamp(dot(N, L) * 0.5 + 0.5, 0.0, 1.0));
     vec3 H = normalize(L + V);
     float s1 = kk(normalize(T + N * (uShift1 + (vRand - 0.5) * 0.08)), H, uExp1);
     float s2 = kk(normalize(T + N * uShift2), H, uExp2);
     float facing = smoothstep(-0.3, 0.4, dot(N, L));
-    colour += Lc * shade * (albedo * diff * uDiffuse + facing * (uSpec1 * mix(1.0, uTipSpec, vRamp) * s1 + uSpec2 * s2 * albedo));
+    colour += Lc * shade * (albedo * diff * uDiffuse + facing * uShine * (uSpec1 * mix(1.0, uTipSpec, vRamp) * s1 + uSpec2 * s2 * glint * albedo));
+    // light through the strand from behind (the rims): a warm glow on the edges of the hair
+    float back = pow(clamp(dot(-L, V), 0.0, 1.0), 4.0);
+    colour += Lc * albedo * back * uTT * (0.6 + 0.4 * vRand) * sqrt(albedo + 0.02);
   }
   #endif
   // Long hair thins out at the tips; short hair ends bluntly (faded short tips dither into speckle).

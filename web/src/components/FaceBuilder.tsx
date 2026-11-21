@@ -25,7 +25,7 @@ import { restoreFace } from "@/lib/faceSession";
 import { sliders, visemes, visibleSliders } from "@/lib/data";
 import { idleDebug, view } from "@/lib/debugView";
 import { GLASSES_FIT, glassesFitState } from "@/lib/glassesFit";
-import { hairRig, loadReviewStyles, setHairColour, setHairStyle } from "@/lib/hair";
+import { hairRig, loadReviewStyles, setHairColour, setHairStyle, setHairWear } from "@/lib/hair";
 import { speechPlayer } from "@/lib/lipsync/player";
 import { lipsyncState } from "@/lib/lipsync/state";
 import { liveSpeech } from "@/lib/lipsync/source";
@@ -103,6 +103,7 @@ if (debugHandle) {
     hair: hairRig,
     setHairStyle,
     setHairColour,
+    setHairWear,
     loadReviewStyles,
     addons: addonRig,
     addonState,

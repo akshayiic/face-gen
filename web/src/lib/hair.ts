@@ -8,6 +8,10 @@
  * Colour: "Natural" is the style's own root → tip colours (index.json "strands"); a swatch replaces them with its
  * shadow → highlight ramp (HAIR_COLOURS). tintStrands() fills the colour uniforms the strand shader reads.
  *
+ * How it's worn (lib/hairShape.ts): tied back (half up, low or high ponytail, bun; face-framing strands left loose or
+ * not) and its volume re-shape the style's strands; frizz (flyaways) and shine are the strand shader's. All four are
+ * part of the hair state, so the rebuild link and the config file carry them.
+ *
  * Style and colour are plain module state applied straight to the meshes, the same way the sliders bypass React. Hair
  * is part of the character: it is in the screenshot sent to Claude and in the cache key (lib/look.ts).
  */
@@ -17,6 +21,7 @@ import { Color, type Group, LinearSRGBColorSpace, type Mesh, type MeshPhysicalMa
 import hairBlob from "@/data/hairBlob.json";
 import { hairIndex, MODELS_BASE, type HairStyleDef } from "@/lib/data";
 import { fetchBytes } from "@/lib/fetchBytes";
+import { HAIR_SHAPE_DEFAULTS, type HairShape, type HairTie, sanitizeHairShape } from "@/lib/hairShape";
 import { partDone, prefetchPart, takePrefetched } from "@/lib/headLoad";
 import { MOTION } from "@/lib/motion";
 import { finishPieceFade, pieceFade, swapPiece } from "@/lib/pieceFade";
@@ -81,12 +86,21 @@ export const hairRig = {
   filesMissing: false,
 };
 /** What a first visit shows; also what the server renders, so the control hydrates cleanly. */
-export const HAIR_DEFAULTS = { style: DEFAULT_STYLE as HairStyle, colour: "natural" as HairColourId };
-export const hairState: { style: HairStyle; colour: HairColourId } = { ...HAIR_DEFAULTS };
+/** How the hair is worn: lib/hairShape.ts (tie, framing, volume) and the strand shader's frizz (0..1) and shine (0..2). */
+export type HairWear = HairShape & { frizz: number; shine: number };
+export const HAIR_WEAR_DEFAULTS: HairWear = { ...HAIR_SHAPE_DEFAULTS, frizz: 0.25, shine: 1 };
+export function sanitizeHairWear(raw: unknown): HairWear {
+  const r = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
+  const num = (v: unknown, lo: number, hi: number, d: number) => (typeof v === "number" && Number.isFinite(v) ? Math.min(hi, Math.max(lo, v)) : d);
+  return { ...sanitizeHairShape(r), frizz: num(r.frizz, 0, 1, HAIR_WEAR_DEFAULTS.frizz), shine: num(r.shine, 0, 2, HAIR_WEAR_DEFAULTS.shine) };
+}
+
+export const HAIR_DEFAULTS = { style: DEFAULT_STYLE as HairStyle, colour: "natural" as HairColourId, ...HAIR_WEAR_DEFAULTS };
+export const hairState: { style: HairStyle; colour: HairColourId } & HairWear = { ...HAIR_DEFAULTS };
 
 // --- UI sync (useSyncExternalStore in HairControl) -------------------------------------------
 
-export type HairSnapshot = { style: HairStyle; colour: HairColourId; loading: boolean; failed: boolean; filesMissing: boolean };
+export type HairSnapshot = { style: HairStyle; colour: HairColourId; loading: boolean; failed: boolean; filesMissing: boolean } & HairWear;
 /** What the server renders (and the client's first paint), before sessionStorage is consulted. */
 export const HAIR_SERVER_SNAPSHOT: HairSnapshot = { ...HAIR_DEFAULTS, loading: false, failed: false, filesMissing: false };
 let snapshot: HairSnapshot = HAIR_SERVER_SNAPSHOT;
@@ -110,7 +124,10 @@ export function hairSnapshot(): HairSnapshot {
   return snapshot;
 }
 const notify = (blendSeconds = 0) => {
-  snapshot = { style: hairState.style, colour: hairState.colour, loading: hairRig.loading, failed: hairRig.failed, filesMissing: hairRig.filesMissing };
+  snapshot = {
+    style: hairState.style, colour: hairState.colour, loading: hairRig.loading, failed: hairRig.failed, filesMissing: hairRig.filesMissing,
+    tie: hairState.tie, framing: hairState.framing, volume: hairState.volume, frizz: hairState.frizz, shine: hairState.shine,
+  };
   for (const fn of listeners) fn(blendSeconds);
 };
 
@@ -125,6 +142,7 @@ function loadHairState(): void {
     const saved = JSON.parse(raw) as Partial<typeof hairState>;
     if (saved.style === "none" || (saved.style && hairStyleById(saved.style))) hairState.style = saved.style;
     if (HAIR_COLOURS.some((c) => c.id === saved.colour)) hairState.colour = saved.colour as HairColourId;
+    Object.assign(hairState, sanitizeHairWear(saved)); // older saves have none of it: the defaults
     if (saved.style !== hairState.style) persist(); // an unknown style: store what we show
   } catch {
     /* private mode or malformed: keep defaults */
@@ -235,7 +253,40 @@ function applyHair(seconds = 0): void {
   if (seconds > 0) blendStrands(colours, seconds, ramp);
   else tintStrands(colours, ramp);
   applyHairTexture(colours);
+  applyWear(group);
 }
+
+/** Tie, framing and volume (re-shaping the strands, only when they changed for this group) and frizz and shine. */
+function applyWear(group: Group): void {
+  const shape: HairShape = { tie: hairState.tie, framing: hairState.framing, volume: hairState.volume };
+  const key = JSON.stringify(shape);
+  const reshape = group.userData.reshape as ((s: HairShape) => boolean) | undefined;
+  if (reshape && group.userData.shapeKey !== key && reshape(shape)) group.userData.shapeKey = key;
+  (group.userData.setLook as ((l: { frizz: number; shine: number }) => void) | undefined)?.({ frizz: hairState.frizz, shine: hairState.shine });
+}
+
+let wearFrame = 0;
+/**
+ * How the hair is worn (Style tab → Hair): tie, face-framing strands, volume, frizz, shine. Re-shaping runs at most once
+ * a frame while a slider drags.
+ */
+export function setHairWear(patch: Partial<HairWear>): void {
+  Object.assign(hairState, sanitizeHairWear({ ...hairState, ...patch }));
+  persist();
+  notify();
+  if (typeof window === "undefined" || wearFrame) return;
+  wearFrame = window.requestAnimationFrame(() => {
+    wearFrame = 0;
+    if (hairRig.mesh) applyWear(hairRig.mesh);
+  });
+}
+
+/** Can this style be tied back? Long enough (shoulder length or longer) and not already tied. */
+export function canTie(style: HairStyle): boolean {
+  const g = style === "none" ? undefined : hairStyleById(style)?.group;
+  return g === "shoulder" || g === "long" || g === "bob";
+}
+export type { HairTie };
 
 /** The uploaded hair texture onto a colour set (lib/surfaceTextures.ts); its changes reach the style on the head. */
 function applyHairTexture(colours: StrandColours | undefined): void {

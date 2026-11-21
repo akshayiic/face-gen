@@ -7,13 +7,40 @@
  * the one holding the chosen style shows (Short when there is none), so the selection is always in view.
  * The state lives in lib/hair.ts (applied straight to the mesh); this component just mirrors it
  * through useSyncExternalStore, which also carries the subtle loading state.
+ * Below the styles, how it's worn (lib/hairShape.ts): down, half up, a low or high ponytail or a bun (styles shoulder
+ * length or longer), face-framing strands left loose; and volume, flyaways and shine for any style.
  */
 import { useState, useSyncExternalStore } from "react";
 
 import { RadioGroup } from "@/components/ui/RadioGroup";
+import { RangeRow } from "@/components/ui/RangeRow";
 import { NoneMark, thumbClass, thumbImg } from "@/components/ui/thumb";
 import { MODELS_BASE, type HairGroup } from "@/lib/data";
-import { HAIR_COLOURS, HAIR_SERVER_SNAPSHOT, HAIR_STYLES, hairChipHex, hairSnapshot, hairStyleById, onHairChange, setHairColour, setHairStyle, type HairStyle } from "@/lib/hair";
+import {
+  canTie,
+  HAIR_COLOURS,
+  HAIR_SERVER_SNAPSHOT,
+  HAIR_STYLES,
+  HAIR_WEAR_DEFAULTS,
+  hairChipHex,
+  hairSnapshot,
+  hairStyleById,
+  type HairTie,
+  onHairChange,
+  setHairColour,
+  setHairStyle,
+  setHairWear,
+  type HairStyle,
+} from "@/lib/hair";
+
+const TIES: { id: HairTie; label: string }[] = [
+  { id: "down", label: "Down" },
+  { id: "half", label: "Half up" },
+  { id: "low", label: "Low ponytail" },
+  { id: "high", label: "High ponytail" },
+  { id: "bun", label: "Bun" },
+];
+const pct = (v: number) => `${Math.round(v * 100)}%`;
 
 type Filter = HairGroup | "curly" | "all";
 const FILTERS: readonly { id: Filter; label: string }[] = [
@@ -100,6 +127,31 @@ export function HairControl() {
           </button>
         ))}
       </RadioGroup>
+      {state.style !== "none" && (
+        <div className="-mx-5 mt-3">
+          <div className="px-5">
+            <span className="text-body text-ink">Wear it</span>
+            <RadioGroup label="How the hair is worn" className="mt-2 flex flex-wrap gap-2">
+              {TIES.map((t) => (
+                <button key={t.id} type="button" role="radio" aria-checked={state.tie === t.id} disabled={t.id !== "down" && !canTie(state.style)}
+                  onClick={() => setHairWear({ tie: t.id })} className="pill-secondary pill-choice h-8 px-3 text-label">
+                  {t.label}
+                </button>
+              ))}
+            </RadioGroup>
+            {!canTie(state.style) && <p className="mt-1.5 text-meta text-ink-3">Tying back needs hair to the chin or longer.</p>}
+            {state.tie !== "down" && canTie(state.style) && (
+              <label className="mt-2 flex cursor-pointer items-center gap-2 text-body text-ink">
+                <input type="checkbox" checked={state.framing} onChange={(e) => setHairWear({ framing: e.target.checked })} className="size-4 accent-current" />
+                Leave face-framing strands loose
+              </label>
+            )}
+          </div>
+          <RangeRow label="Volume" value={state.volume} min={-1} max={1} step={0.05} reset={0} low="flat" high="full" mid format={(v) => `${v > 0 ? "+" : ""}${Math.round(v * 100)}%`} onChange={(volume) => setHairWear({ volume })} />
+          <RangeRow label="Flyaways" value={state.frizz} min={0} max={1} step={0.05} reset={HAIR_WEAR_DEFAULTS.frizz} low="sleek" high="frizzy" format={pct} onChange={(frizz) => setHairWear({ frizz })} />
+          <RangeRow label="Shine" value={state.shine} min={0} max={2} step={0.05} reset={HAIR_WEAR_DEFAULTS.shine} low="matte" high="glossy" mid format={(v) => `×${v.toFixed(2)}`} onChange={(shine) => setHairWear({ shine })} />
+        </div>
+      )}
       {/* Stays usable with no hair: the eyebrows, lashes and beard wear this colour too. */}
       <RadioGroup label="Hair colour" className="mt-3 flex flex-wrap items-center gap-2 py-0.5">
         {HAIR_COLOURS.map((c) => (
