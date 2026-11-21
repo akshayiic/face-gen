@@ -19,10 +19,11 @@ import { Status } from "@/components/ui/Status";
 import { characterSettled, prepareFirst, prepareNext, randomCharacter, resetCharacter } from "@/lib/character";
 import { describeFace } from "@/lib/describeFace";
 
-type Action = "random" | "reset";
+type Action = "random" | "indian" | "reset";
 
 const TIPS = {
   random: "A new face, style and expression",
+  indian: "A new woman or girl from India: warm skin tones, dark hair and eyes, a feminine-presenting face, any age from youthful to mature",
   reset: "Back to a blank head",
 };
 
@@ -37,13 +38,16 @@ export function Toolbar() {
     change().finally(() => {
       setBusy(null);
       // described once the morph has landed too (the pieces can be on before the face stops moving)
-      void characterSettled().then(() => setSaid((s) => ({ message: `${action === "random" ? "New character" : "Reset"}. ${describeFace()}`, count: s.count + 1 })));
+      void characterSettled().then(() => setSaid((s) => ({ message: `${action === "reset" ? "Reset" : "New character"}. ${describeFace()}`, count: s.count + 1 })));
     });
   };
   return (
-    <div className="pointer-events-auto absolute bottom-4 left-4 flex gap-2">
+    <div className="pointer-events-auto absolute bottom-4 left-4 right-4 flex flex-wrap gap-2">
       <BusyPill className="pill-secondary h-9" busy={busy === "random"} held={!!busy} onClick={() => run("random", randomCharacter)} onPointerEnter={prepareNext} onFocus={prepareNext} data-tip={TIPS.random} aria-describedby={`${ids}-random`}>
         Random character
+      </BusyPill>
+      <BusyPill className="pill-secondary h-9" busy={busy === "indian"} held={!!busy} onClick={() => run("indian", () => randomCharacter("indian-woman"))} data-tip={TIPS.indian} aria-describedby={`${ids}-indian`}>
+        Random Indian woman
       </BusyPill>
       <BusyPill className="pill-secondary h-9" busy={busy === "reset"} held={!!busy} onClick={() => run("reset", resetCharacter)} data-tip={TIPS.reset} aria-describedby={`${ids}-reset`}>
         Reset
@@ -53,6 +57,9 @@ export function Toolbar() {
       {/* the hints for screen readers (the tooltip, TooltipLayer, is visual only) */}
       <span id={`${ids}-random`} className="sr-only">
         {TIPS.random}
+      </span>
+      <span id={`${ids}-indian`} className="sr-only">
+        {TIPS.indian}
       </span>
       <span id={`${ids}-reset`} className="sr-only">
         {TIPS.reset}

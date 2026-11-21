@@ -142,6 +142,9 @@ export function configToMarkdown(c: ConfigFile, labels: Record<string, string> =
       ["Oiliness", typeof d.oiliness === "number" ? `×${d.oiliness.toFixed(2)}` : "—"],
       ["Sweat", pct(d.sweat)],
       ["Grime", pct(d.grime)],
+      ["Lipstick", typeof d.lipColour === "string" && d.lipColour ? `${d.lipColour} at ${pct(d.lipOpacity)}` : "none"],
+      ["Lip liner", typeof d.lipLiner === "number" && d.lipLiner > 0 ? `${pct(d.lipLiner)}, ${typeof d.lipLinerColour === "string" && d.lipLinerColour ? d.lipLinerColour : "automatic"}` : "none"],
+      ["Lip finish", typeof d.lipGloss === "number" ? `×${d.lipGloss.toFixed(2)}` : "—"],
     ]),
     "",
   );

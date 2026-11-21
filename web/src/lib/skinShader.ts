@@ -53,8 +53,8 @@ import { loadKtx2, TEXTURES_BASE, tieredUrl } from "@/lib/textures";
 export const SKIN_SHADE = {
   aoIndirect: 1.0, // how much the baked AO darkens the environment light (three's aoMapIntensity)
   aoDirect: 0.6, // … and the key/fill/rim lights (0 = not at all, 1 = as much as the environment)
-  scalp: 0.85, // how far fully covered scalp goes towards the hair's root colour …
-  scalpDarken: 0.7, // … darkened this much (the scalp sits in the hair's shadow)
+  scalp: 1.0, // how far fully covered scalp goes towards the hair's root colour (1: no bare skin between the roots) …
+  scalpDarken: 0.85, // … darkened this much (the scalp sits in the hair's shadow)
   // regions
   redness: 0.5, // how strongly G tints the skin (multiplies the tone, so dark tones get a subtle flush)
   redTint: [1.0, 0.74, 0.74], // linear RGB multiplier at full redness
@@ -169,6 +169,14 @@ export const skinUniforms = {
   uOil: { value: 1 },
   uSweat: { value: 0 },
   uGrime: { value: 0 },
+  // lip makeup (lib/skinDetails.ts): lipstick colour (raw sRGB) and amount, liner strength and colour (automatic: a
+  // darker shade of the lipstick or of the lips' own colour), and the finish (0 matte … 1 as the lips are … 2 gloss)
+  uLipColour: { value: new Color(0, 0, 0) },
+  uLipAmt: { value: 0 },
+  uLipLiner: { value: 0 },
+  uLipLinerColour: { value: new Color(0, 0, 0) },
+  uLipLinerAuto: { value: 1 },
+  uLipGloss: { value: 1 },
   // scars and marks (lib/marks.ts): A = rest position (mm) + type, B = rest normal + angle (rad), C = length, width
   // (mm), healing (0 fresh … 1 old), seed
   uMarkA: { value: Array.from({ length: MAX_MARKS }, () => new Vector4()) },
@@ -247,6 +255,8 @@ uniform vec3 uSkinTexMean;
 uniform float uMottle, uVeins, uCrease, uRoughVar, uCavity;
 uniform vec3 uCreaseTint, uLobes, uSssNormal, uShadowTint;
 uniform float uSun, uSunSpots, uCapillaries, uOil, uSweat, uGrime;
+uniform vec3 uLipColour, uLipLinerColour; // raw sRGB (lip makeup, lib/skinDetails.ts)
+uniform float uLipAmt, uLipLiner, uLipLinerAuto, uLipGloss;
 uniform vec4 uMarkA[${MAX_MARKS}], uMarkB[${MAX_MARKS}], uMarkC[${MAX_MARKS}];
 uniform int uMarkCount;
 uniform sampler2D uSkinNormalMap, uSkinRoughMap, uSkinCavityMap;
@@ -338,6 +348,25 @@ const REGIONS = /* glsl */ `
   diffuseColor.rgb *= mix(vec3(1.0), uRedTint, clamp(skinReg.g * blotch, 0.0, 1.0) * uRedness);
   skinLip = smoothstep(${SKIN_SHADE.lipEdge[0].toFixed(2)}, ${SKIN_SHADE.lipEdge[1].toFixed(2)}, skinReg.g);
   diffuseColor.rgb *= mix(vec3(1.0), uLipTint, skinLip * uLips);
+  if (uLipAmt > 0.0 || uLipLiner > 0.0) {
+    // lip makeup: the lipstick over the lips' own region, and a liner on the vermilion border (the band where the
+    // redness map rises from skin to lip)
+    // (the redness map is high on the nose, ears and eyelids too: only inside the mouth's box, in rest-skin mm)
+    float lipBox = smoothstep(212.0, 220.0, vRest.y) * (1.0 - smoothstep(250.0, 257.0, vRest.y)) * (1.0 - smoothstep(27.0, 34.0, abs(vRest.x))) * smoothstep(88.0, 100.0, vRest.z);
+    // the map's lip edge is stair-stepped and noisy: the border and the lipstick's edge read a blurred copy of it
+    float lipG = skinReg.g;
+    for (int i = 0; i < 12; i++) {
+      float a = float(i) * 0.5235988; // 30°
+      lipG += texture2D(aoMap, vAoMapUv + vec2(cos(a), sin(a)) * (i % 2 == 0 ? 0.0035 : 0.0018)).g;
+    }
+    lipG /= 13.0;
+    float lipSolid = smoothstep(0.55, 0.8, lipG) * lipBox;
+    float lipRing = smoothstep(0.28, 0.5, lipG) * (1.0 - smoothstep(0.5, 0.78, lipG)) * lipBox;
+    vec3 lipC = sRGBTransferEOTF(vec4(uLipColour, 1.0)).rgb;
+    diffuseColor.rgb = mix(diffuseColor.rgb, lipC, lipSolid * uLipAmt);
+    vec3 linerC = uLipLinerAuto > 0.5 ? (uLipAmt > 0.0 ? lipC : diffuseColor.rgb) * 0.5 : sRGBTransferEOTF(vec4(uLipLinerColour, 1.0)).rgb;
+    diffuseColor.rgb = mix(diffuseColor.rgb, linerC, clamp(lipRing * uLipLiner * 1.4, 0.0, 1.0));
+  }
   {
     // round the eyes (vRest is in mm): under the eye (towards the inner corner) and the upper lid crease
     vec2 e = vec2(abs(vRest.x) - 30.9, vRest.y - 303.2);
@@ -534,7 +563,8 @@ const ROUGHNESS = /* glsl */ `
 #ifdef USE_AOMAP
   roughnessFactor = mix(uRoughDry, uRoughOily, skinReg.b);
   roughnessFactor = mix(roughnessFactor, 0.92, stubbleRough); // stubble is matte
-  roughnessFactor = mix(roughnessFactor, uLipRough, skinLip);
+  // the lips' finish: 0 matte (rougher), 1 as they are, 2 high gloss (smoother)
+  roughnessFactor = mix(roughnessFactor, uLipRough * (uLipGloss < 1.0 ? mix(2.4, 1.0, uLipGloss) : mix(1.0, 0.45, uLipGloss - 1.0)), skinLip);
   roughnessFactor *= 1.0 + uRoughVar * (ageNoise(vRest * 0.3 + 5.0) - 0.5) * 2.0;
 #ifdef USE_SKIN_ROUGH_MAP
   roughnessFactor = mix(roughnessFactor, texture2D(uSkinRoughMap, vAoMapUv).g, uSkinRoughAmt);
@@ -551,7 +581,7 @@ const ROUGHNESS = /* glsl */ `
 const OIL = /* glsl */ `
 #include <lights_physical_fragment>
 #ifdef USE_CLEARCOAT
-  material.clearcoat *= mix(skinReg.b * skinReg.b * uOil, uLipSheen, skinLip); // the oily T-zone, and moist lips
+  material.clearcoat *= mix(skinReg.b * skinReg.b * uOil, uLipSheen * uLipGloss, skinLip); // the oily T-zone, and moist lips (× their finish)
   material.clearcoat = max(material.clearcoat, 0.6 * sweatWet); // a film of sweat
 #endif
 `;

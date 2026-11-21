@@ -446,7 +446,7 @@ export async function buildGroom(
  * Per skin vertex 0..1: how densely hair roots grow within `radius` (head space), soft-edged; hair shorter than
  * GROOM.scalpFullLength counts less (`reach`: root → tip distance per root, optional). Null before the head loads.
  */
-function coverFromRoots(roots: Float32Array, reach: Float32Array | null, radius = 0.007, full = 14): Float32Array | null {
+function coverFromRoots(roots: Float32Array, reach: Float32Array | null, radius = 0.008, full = 2): Float32Array | null {
   const shape = skinShape();
   if (!shape) return null;
   const rest = shape.rest;

@@ -10,6 +10,7 @@ import { ClothesControl } from "@/components/ui/ClothesControl";
 import { EyeControl } from "@/components/ui/EyeControl";
 import { FinishControl } from "@/components/ui/FinishControl";
 import { HairControl } from "@/components/ui/HairControl";
+import { LipMakeupControl } from "@/components/ui/LipMakeupControl";
 import { SkinControl } from "@/components/ui/SkinControl";
 import { MarksControl } from "@/components/ui/MarksControl";
 import { ScanMapsControl } from "@/components/ui/ScanMapsControl";
@@ -25,6 +26,7 @@ export function StyleSection() {
       <Block title="Colouring">
         <SkinControl />
         <SkinDetailsControl />
+        <LipMakeupControl />
         <SkinTextureControl />
         <ScanMapsControl />
         <EyeControl />

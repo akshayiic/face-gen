@@ -20,9 +20,11 @@
  * button, so the click finds them waiting. Only the face, age and expression are rolled at click time; age's effect on
  * the hair (grey, bald) is applied then, with the same odds.
  *
- * Tweak the odds and timings in CHARACTER.
+ * Tweak the odds and timings in CHARACTER. A profile ("Random Indian woman", lib/characterProfiles.ts) swaps the odds for
+ * its own: colouring, hair, brows, lashes, a woman's Age range and a feminine-presenting lean on the face.
  */
 import { precompile } from "@/lib/sceneRig";
+import { type CharacterProfile, INDIAN_WOMAN, womanLean } from "@/lib/characterProfiles";
 import {
   ADDON_CATEGORIES,
   ADDON_DEFAULTS,
@@ -40,7 +42,7 @@ import { emotionDefs, MODELS_BASE, sliders, visibleSliders, type Weights } from 
 import { AGE } from "@/lib/age";
 import { NEUTRAL, setEmotion, setIntensity } from "@/lib/emotion";
 import { EYE_COLOURS, EYE_DEFAULT, setEyeColour, type EyeColourId } from "@/lib/eyes";
-import { HAIR_COLOURS, HAIR_DEFAULTS, HAIR_STYLES, hairFileUrl, hairState, hairStyleById, setHairColour, setHairStyle, type HairColourId, type HairStyle } from "@/lib/hair";
+import { canTie, HAIR_COLOURS, HAIR_DEFAULTS, HAIR_STYLES, hairFileUrl, hairState, hairStyleById, setHairColour, setHairStyle, setHairWear, type HairColourId, type HairStyle } from "@/lib/hair";
 import { preload, whenRevealed } from "@/lib/headLoad";
 import { finishPieceFade, openPieceFade, pieceFade, runPieceFade } from "@/lib/pieceFade";
 import { askLimiter } from "@/lib/morphs/capsClient";
@@ -50,6 +52,7 @@ import { morphs } from "@/lib/morphs/store";
 import { centrePose } from "@/lib/pose";
 import { resetFineShape } from "@/lib/sculpt";
 import { setSkinTone, SKIN_DEFAULT, SKIN_TONES, type SkinToneId } from "@/lib/skin";
+import { setSkinDetails, type SkinDetails } from "@/lib/skinDetails";
 import { whenIdle } from "@/lib/whenIdle";
 
 /** Tweak freely. Chances are 0..1; weights are relative. */
@@ -128,7 +131,8 @@ type Style = {
  * A random character's style before its age is known: skin, eyes, hair, a non-grey hair colour, brows, lashes, maybe a
  * beard and glasses. randomCharacter makes it grey or bald by age.
  */
-function rollStyle(): Style {
+function rollStyle(profile: CharacterProfile = "any"): Style {
+  if (profile === "indian-woman") return rollIndianWomanStyle();
   // Colouring: eye colour leans on skin tone.
   const tone = Math.floor(Math.random() * SKIN_TONES.length);
   const browns = EYE_COLOURS.filter((c) => c.id.includes("brown"));
@@ -147,6 +151,47 @@ function rollStyle(): Style {
       glasses: chance(CHARACTER.glasses) ? anyStyle("glasses") : "none",
     },
     facialHairColour: "hair",
+  };
+}
+
+/**
+ * A woman or girl from India (lib/characterProfiles.ts): the colouring and styling, before her age is known. No beard,
+ * never bald; the hair is mostly long, shoulder length or tied back, black or dark brown.
+ */
+function rollIndianWomanStyle(): Style {
+  const P = INDIAN_WOMAN;
+  const group = pickWeighted(P.hairGroups);
+  const wavy = chance(P.curly);
+  const styles = HAIR_STYLES.filter((s) => s.group === group && !!s.curly === wavy);
+  const pool = styles.length ? styles : HAIR_STYLES.filter((s) => s.group === group);
+  const hairColour = pickWeighted(P.hairColours);
+  return {
+    skin: pickWeighted(P.skin) as SkinToneId,
+    eyes: pickWeighted(P.eyes) as EyeColourId,
+    hair: (pool.length ? pick(pool) : pick(HAIR_STYLES)).id,
+    hairColour: (HAIR_COLOURS.find((c) => c.id === hairColour) ?? NATURAL_HAIR).id,
+    addons: {
+      eyebrows: pickWeighted(P.eyebrows),
+      eyelashes: pickWeighted(P.eyelashes),
+      facialHair: "none",
+      glasses: chance(P.glasses) ? anyStyle("glasses") : "none",
+    },
+    facialHairColour: "hair",
+  };
+}
+
+/** Lip colour for a woman of this Age (lib/skinDetails.ts): none on a girl, a soft shade and maybe a liner on an adult. */
+function rollLips(age: number): Partial<SkinDetails> {
+  const P = INDIAN_WOMAN;
+  const bare = { lipColour: "", lipLiner: 0, lipLinerColour: "", lipGloss: 1 };
+  if (age < P.girlBelow || !chance(P.lipstick)) return bare;
+  const liner = chance(P.lipLiner[0]);
+  return {
+    lipColour: pick(P.lipShades),
+    lipOpacity: Math.round(rand(0.5, 0.9) * 20) / 20,
+    lipLiner: liner ? Math.round(rand(0.1, P.lipLiner[1]) * 20) / 20 : 0,
+    lipLinerColour: "", // automatic: a darker shade of the lipstick
+    lipGloss: Math.round(rand(0.6, 1.4) * 20) / 20,
   };
 }
 
@@ -294,30 +339,47 @@ const wait = (seconds: number) => new Promise<void>((r) => setTimeout(r, seconds
 
 const within = (work: Promise<unknown>, seconds: number) => Promise.race([work, wait(seconds)]);
 
-export function randomCharacter(): Promise<void> {
+/**
+ * A new character in one click. `profile` "indian-woman" draws a woman or girl from India instead (lib/characterProfiles.ts):
+ * the colouring, hair and styling, a youthful-to-mature Age and a feminine-presenting lean on the face.
+ */
+export function randomCharacter(profile: CharacterProfile = "any"): Promise<void> {
+  const woman = profile === "indian-woman";
   // The face first, so a seeded Math.random (the stress test) gives the same faces whether or not a
   // style was rolled ahead.
-  const age = rand(...CHARACTER.age);
+  const age = woman ? rand(...INDIAN_WOMAN.age) : rand(...CHARACTER.age);
   const old = age >= CHARACTER.old;
-  const distinctiveness = rollDistinctiveness();
+  const distinctiveness = woman ? Math.min(1.5, rollDistinctiveness()) : rollDistinctiveness(); // typical faces, a few striking ones
   // drawn now, fitted to the limiter off the main thread (a distinctive face is seconds of checks on a phone)
-  const defs = visibleSliders(), hold = { ...teethOf(defs, morphs.base), [AGE.target]: age }; // the teeth stay as they are
+  const defs = visibleSliders();
+  const hold: Weights = { ...teethOf(defs, morphs.base), [AGE.target]: age }; // the teeth stay as they are
+  if (woman) Object.assign(hold, womanLean(Object.fromEntries(defs.map((d) => [d.target, d])))); // a feminine-presenting lean
   let face: Weights | null = null;
   const faceReady = randomFaceAsync(defs, askLimiter, distinctiveness, hold)
     .catch(() => randomFace(defs, distinctiveness, hold)) // the worker went wrong: fitted here
     .then((f) => void (face = f));
   // Expression.
-  const weights = Object.fromEntries([NEUTRAL, ...emotionDefs.map((e) => e.id)].map((id) => [id, CHARACTER.emotions[id] ?? 1]));
+  const odds = woman ? INDIAN_WOMAN.emotions : CHARACTER.emotions;
+  const weights = Object.fromEntries([NEUTRAL, ...emotionDefs.map((e) => e.id)].map((id) => [id, odds[id] ?? (woman ? INDIAN_WOMAN.otherEmotions : 1)]));
   const emotion = pickWeighted(weights);
-  const intensity = Math.round(rand(...CHARACTER.intensity) * 100) / 100;
+  const [loI, hiI] = woman ? INDIAN_WOMAN.intensity : CHARACTER.intensity;
+  const intensity = Math.round(rand(loI, hiI) * 100) / 100;
 
-  // The style rolled ahead (or now), then by age: balder and greyer (same odds as rolling with the age known).
-  const style = next ?? rollStyle();
-  next = undefined;
-  if (old && style.hair !== "none" && chance((CHARACTER.baldWhenOld - CHARACTER.bald) / (1 - CHARACTER.bald))) style.hair = "none";
-  if (old && chance(CHARACTER.greyWhenOld)) style.hairColour = pick(["grey", "white"]);
+  // The style rolled ahead (or now), then by age: balder and greyer (same odds as rolling with the age known). A profile
+  // rolls its own style (the one rolled ahead stays for the next plain Random character).
+  const style = woman ? rollStyle(profile) : (next ?? rollStyle());
+  if (!woman) next = undefined;
+  if (!woman && old && style.hair !== "none" && chance((CHARACTER.baldWhenOld - CHARACTER.bald) / (1 - CHARACTER.bald))) style.hair = "none";
+  if (old && chance(woman ? 0.45 : CHARACTER.greyWhenOld)) style.hairColour = pick(["grey", "white"]);
+  // Hair worn down, or sometimes a low ponytail; lip colour on an adult, none on a girl.
+  const tied = woman && canTie(style.hair) && chance(INDIAN_WOMAN.tieWhenTiable);
+  const lips = woman ? rollLips(age) : undefined;
 
   return track(transition(style, () => {
+    if (woman) {
+      setHairWear({ tie: tied ? "low" : "down", framing: true, volume: 0, frizz: 0.12 });
+      setSkinDetails(lips ?? {});
+    }
     // Face and age: one tween, so the shape and the skin's ageing move together.
     // (the Age is fitted with the face: an age set afterwards could break a face that only fits at rest)
     if (face) morphs.tweenTo(face, CHARACTER.duration); // (null: Reset or another random face took over meanwhile)

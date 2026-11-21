@@ -110,9 +110,10 @@ void main() {
     vec3 out2 = normalize(P.xyz - uCentre);
     vec3 m1 = normalize(cross(T, out2));
     vec3 m2 = cross(m1, T);
-    float fz = uFrizz * 0.0035 * fl * (0.4 + hash(id + 13.0));
+    float fz = uFrizz * 0.0026 * fl * (0.4 + hash(id + 13.0));
     pos += (m1 * sin(t * 31.0 + hash(id + 2.0) * 6.2831853) + m2 * cos(t * 23.0 + hash(id + 4.0) * 6.2831853)) * fz;
-    if (hash(id + 19.0) < 0.08 * uFrizz) pos += out2 * uFrizz * 0.025 * fl * fl * (0.4 + hash(id + 23.0));
+    // a few flyaways (they read as dark pen lines against the backdrop when there are many)
+    if (hash(id + 19.0) < 0.03 * uFrizz) pos += out2 * uFrizz * 0.018 * fl * fl * (0.4 + hash(id + 23.0));
   }
   vHead = pos * 1000.0;
   vec4 mv = modelViewMatrix * vec4(pos, 1.0);

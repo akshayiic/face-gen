@@ -68,10 +68,27 @@ describe("skin details", { timeout: 30_000 }, () => {
     expect([skinUniforms.uMottle.value, skinUniforms.uVeins.value]).toEqual([1.6, 0.9]);
   });
 
+  it("puts the lip makeup in the shader (no lipstick = no amount; an automatic liner colour)", () => {
+    setSkinDetails({ lipColour: "", lipOpacity: 0.6, lipLiner: 0.5, lipLinerColour: "", lipGloss: 1.5 });
+    applySkinDetails();
+    expect([skinUniforms.uLipAmt.value, skinUniforms.uLipLiner.value, skinUniforms.uLipLinerAuto.value, skinUniforms.uLipGloss.value]).toEqual([0, 0.5, 1, 1.5]);
+    setSkinDetails({ lipColour: "#ff0000", lipLinerColour: "#00ff00" });
+    applySkinDetails();
+    expect(skinUniforms.uLipAmt.value).toBe(0.6);
+    expect([skinUniforms.uLipColour.value.r, skinUniforms.uLipColour.value.g]).toEqual([1, 0]);
+    expect([skinUniforms.uLipLinerAuto.value, skinUniforms.uLipLinerColour.value.g]).toEqual([0, 1]);
+    setSkinDetails({ lipColour: "", lipLiner: 0, lipLinerColour: "", lipGloss: 1 });
+  });
+
   it("checks stored and linked values field by field", () => {
     expect(sanitizeSkinDetails({ blush: 9, freckles: -1, moles: 40.4, moleSeed: "x", pores: "deep", variation: 7, veins: -2, extra: 1 })).toEqual({
       blush: 1, freckles: 0, moles: MAX_MOLES, moleSize: 0.4, moleSeed: 1, pores: 1, underEye: 1, variation: 2, veins: 0,
       wrinkles: 0, expression: 1, sun: 0, sunSpots: 0, capillaries: 0, oiliness: 1, sweat: 0, grime: 0,
+      lipColour: "", lipOpacity: 0.85, lipLiner: 0, lipLinerColour: "", lipGloss: 1,
+    });
+    // lip makeup: colours are "#rrggbb" or nothing, amounts are clamped
+    expect(sanitizeSkinDetails({ lipColour: "#C23B3B", lipOpacity: 4, lipLiner: -1, lipLinerColour: "red", lipGloss: 9 })).toMatchObject({
+      lipColour: "#c23b3b", lipOpacity: 1, lipLiner: 0, lipLinerColour: "", lipGloss: 2,
     });
     // a link from before tone variation and veins existed gets their defaults
     expect(sanitizeSkinDetails({ blush: 0.2 })).toMatchObject({ variation: 1, veins: 0.4 });

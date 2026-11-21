@@ -45,16 +45,29 @@ export type SkinDetails = {
   oiliness: number;
   sweat: number;
   grime: number;
+  /** Lip makeup: the lipstick shade ("#rrggbb"; "" = none, the lips' own colour) … */
+  lipColour: string;
+  /** … how much of it (0..1), */
+  lipOpacity: number;
+  /** the liner's strength (0..1: none … a bold outline), its colour ("#rrggbb"; "" = a darker shade of the lipstick) … */
+  lipLiner: number;
+  lipLinerColour: string;
+  /** … and the finish, 0..2: 0 matte, 1 the shader's own moist lips, 2 high gloss. */
+  lipGloss: number;
 };
 
 export const SKIN_DETAILS_DEFAULTS: SkinDetails = {
   blush: 0, freckles: 0, moles: 0, moleSize: 0.4, moleSeed: 1, pores: 1, underEye: 1, variation: 1, veins: 0.4,
   wrinkles: 0, expression: 1, sun: 0, sunSpots: 0, capillaries: 0, oiliness: 1, sweat: 0, grime: 0,
+  lipColour: "", lipOpacity: 0.85, lipLiner: 0, lipLinerColour: "", lipGloss: 1,
 };
 export const skinDetails: SkinDetails = { ...SKIN_DETAILS_DEFAULTS };
 
 const clamp = (v: unknown, lo: number, hi: number, fallback: number) =>
   typeof v === "number" && Number.isFinite(v) ? Math.min(hi, Math.max(lo, v)) : fallback;
+
+/** "#rrggbb" (any case) as lower case, or "" for anything else (none / automatic). */
+const hex = (v: unknown): string => (typeof v === "string" && /^#[0-9a-fA-F]{6}$/.test(v) ? v.toLowerCase() : "");
 
 /** A stored or linked value, checked field by field (unknown fields dropped, numbers clamped). */
 export function sanitizeSkinDetails(raw: unknown): SkinDetails {
@@ -78,6 +91,11 @@ export function sanitizeSkinDetails(raw: unknown): SkinDetails {
     oiliness: clamp(r.oiliness, 0, 2, d.oiliness),
     sweat: clamp(r.sweat, 0, 1, d.sweat),
     grime: clamp(r.grime, 0, 1, d.grime),
+    lipColour: hex(r.lipColour),
+    lipOpacity: clamp(r.lipOpacity, 0, 1, d.lipOpacity),
+    lipLiner: clamp(r.lipLiner, 0, 1, d.lipLiner),
+    lipLinerColour: hex(r.lipLinerColour),
+    lipGloss: clamp(r.lipGloss, 0, 2, d.lipGloss),
   };
 }
 
@@ -106,6 +124,13 @@ export function setSkinDetails(patch: Partial<SkinDetails>): void {
 /** New places for the moles. */
 export const shuffleMoles = () => setSkinDetails({ moleSeed: 1 + Math.floor(Math.random() * 2 ** 30) });
 
+/** A colour uniform holding "#rrggbb" as raw sRGB 0..1 (the shader converts it, like uScalpColour). */
+function setRawSrgb(c: { r: number; g: number; b: number }, h: string): void {
+  c.r = parseInt(h.slice(1, 3), 16) / 255;
+  c.g = parseInt(h.slice(3, 5), 16) / 255;
+  c.b = parseInt(h.slice(5, 7), 16) / 255;
+}
+
 /** Push the state into the shader (Head.tsx calls it once the skin is bound; before that only the amounts land). */
 export function applySkinDetails(): void {
   const u = skinUniforms;
@@ -121,6 +146,13 @@ export function applySkinDetails(): void {
   u.uOil.value = skinDetails.oiliness;
   u.uSweat.value = skinDetails.sweat;
   u.uGrime.value = skinDetails.grime;
+  // lip makeup: the lipstick (none: amount 0), the liner (its colour automatic when none is chosen) and the finish
+  u.uLipAmt.value = skinDetails.lipColour ? skinDetails.lipOpacity : 0;
+  setRawSrgb(u.uLipColour.value, skinDetails.lipColour || "#000000");
+  u.uLipLiner.value = skinDetails.lipLiner;
+  u.uLipLinerAuto.value = skinDetails.lipLinerColour ? 0 : 1;
+  setRawSrgb(u.uLipLinerColour.value, skinDetails.lipLinerColour || "#000000");
+  u.uLipGloss.value = skinDetails.lipGloss;
   setWrinkleSettings(skinDetails.wrinkles, skinDetails.expression);
   const spots = molePlaces(skinDetails.moleSeed);
   const n = Math.min(skinDetails.moles, spots.length);

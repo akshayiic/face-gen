@@ -20,6 +20,17 @@ and how that is enforced.
   scripted client could send another picture; the guard in the brief and the rate limits still apply to it, and what
   Claude reads from it is cached for that visitor only, so it never becomes another visitor's casting.
 
+## Random Indian woman
+
+The toolbar's "Random Indian woman" draws a woman or girl from India (`web/src/lib/characterProfiles.ts`). It is an
+opt-in styling preset, not a model of a "typical" face: India is very varied, so the face is **not** bent toward an
+ethnic template. The shape comes from the model's own random spread (`lib/morphs/random.ts` still never samples by
+ethnicity or race), with a modest feminine-presenting lean on the sliders that differ between women and men on average.
+The preset sets the broadly documented colouring and the styling: skin tones across the whole warm light-to-deep range,
+dark brown or black hair (grey with age), dark brown eyes, brows and lashes that suit them, no beard, and lip colour on
+adults only. A young Age ("girl") gets no makeup, and the head model is built from adult scans, so "girl" is a youthful
+face, not a child. Nothing is read from a photo or a person.
+
 ## No real voices
 
 - Every voice is new. Voice Design creates voices from a text description; nothing in the app records, uploads or
