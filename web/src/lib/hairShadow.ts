@@ -171,6 +171,47 @@ export function registerHairShadow(group: Object3D, source: HairShadowSource): (
   };
 }
 
+/**
+ * The hair's own shade per strand point (0 buried … 1 lit, as the strand files bake it), for strands re-shaped in the
+ * app (lib/hairShape.ts): how much of the key light reaches each point through the hair (`toLight`, head space, the
+ * same march as hairTransmit) and how much of the sky the hair round it leaves. Once per re-shape on the CPU (~0.1 s),
+ * not per pixel: hair overdraws far too much for a march in its fragment shader.
+ */
+export function bakeHairShade(source: HairShadowSource, toLight: [number, number, number] = [-0.5, 0.42, 0.75]): Float32Array {
+  const out = new Float32Array(source.n * source.p).fill(1);
+  const vol = buildHairVolume([source]);
+  if (!vol) return out;
+  const { data, dims, min, voxel, sigmaMax } = vol;
+  const [nx, ny, nz] = dims;
+  const k = sigmaMax * HAIR_SHADOW.strength;
+  const sigmaAt = (x: number, y: number, z: number) => {
+    const ix = Math.floor((x - min[0]) / voxel), iy = Math.floor((y - min[1]) / voxel), iz = Math.floor((z - min[2]) / voxel);
+    if (ix < 0 || iy < 0 || iz < 0 || ix >= nx || iy >= ny || iz >= nz) return 0;
+    const d = data[ix + nx * (iy + ny * iz)] / 255;
+    return d * d * k;
+  };
+  const len = Math.hypot(...toLight);
+  const L = toLight.map((v) => v / len);
+  const c = [0, 290, 5]; // the head's centre (mm): "outward" for the sky
+  const pos = source.positions;
+  for (let i = 0; i < source.n * source.p; i++) {
+    const x = pos[i * 3] * 1000, y = pos[i * 3 + 1] * 1000, z = pos[i * 3 + 2] * 1000;
+    let tau = 0, t = 3;
+    for (let s = 0; s < 12; s++) {
+      const dt = 1.5 + s * 1.1;
+      const m = t + 0.5 * dt;
+      tau += sigmaAt(x + L[0] * m, y + L[1] * m, z + L[2] * m) * dt;
+      t += dt;
+    }
+    const ox = x - c[0], oy = y - c[1], oz = z - c[2];
+    const ol = Math.hypot(ox, oy, oz) || 1;
+    let amb = 0;
+    for (const [d, w] of [[2, 3], [6, 5], [12, 7], [21, 10]]) amb += sigmaAt(x + (ox / ol) * d, y + (oy / ol) * d, z + (oz / ol) * d) * w;
+    out[i] = 0.6 * Math.exp(-tau) + 0.4 * Math.exp(-amb * HAIR_SHADOW.ambient);
+  }
+  return out;
+}
+
 /** A registered group's strands moved (lib/hairShape.ts: tied back, more volume): rebuild the volume from `source`. */
 export function updateHairShadow(group: Object3D, source: HairShadowSource): void {
   if (!sources.has(group)) return;

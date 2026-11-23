@@ -65,6 +65,7 @@ export function LipMakeupControl() {
       <div className={s.lipLiner ? "transition-opacity" : "pointer-events-none opacity-40 transition-opacity"} aria-disabled={!s.lipLiner || undefined}>
         <SwatchRow title="Liner colour" groupLabel="Lip liner colour" swatches={LINER_SHADES} current={s.lipLinerColour} onChoose={(lipLinerColour) => setSkinDetails({ lipLinerColour })} />
       </div>
+      <RangeRow label="Lip lines" value={s.lipLines} min={0} max={1.5} step={0.05} reset={D.lipLines} low="smooth" high="deeply lined" format={(v) => pct(v / 1.5)} onChange={(lipLines) => setSkinDetails({ lipLines })} />
       <RangeRow label="Lip finish" value={s.lipGloss} min={0} max={2} step={0.05} reset={D.lipGloss} low="matte" high="high gloss" mid format={times} onChange={(lipGloss) => setSkinDetails({ lipGloss })} />
     </>
   );

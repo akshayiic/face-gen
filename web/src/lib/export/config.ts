@@ -7,6 +7,7 @@ import { sliders } from "@/lib/data";
 import { finishSettings } from "@/lib/finishSettings";
 import { SCAN_SLOTS, scanMapDataUrl, scanMapsSnapshot } from "@/lib/scanMaps";
 import { currentSculpt } from "@/lib/sculpt";
+import { microDataUrl, microSettings, microSnapshot } from "@/lib/skinMicro";
 import { hairTextureSnapshot, skinTextureSnapshot, textureDataUrl } from "@/lib/surfaceTextures";
 
 import { currentCharacter } from "./character";
@@ -27,6 +28,7 @@ export function currentConfig(images: boolean): ConfigFile {
     const s = scans[id];
     if (s.on) textures[id] = withImage({ name: s.name, settings: { amount: s.amount } }, images && scanMapDataUrl(id));
   }
+  if (microSnapshot().source === "upload") textures.skinMicro = withImage({ name: microSnapshot().name, settings: { ...microSettings() } }, images && microDataUrl());
   const sculpt = currentSculpt();
   return {
     format: CONFIG_FORMAT,

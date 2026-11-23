@@ -1,0 +1,12 @@
+# What `vercel deploy` from web/ leaves out (as the repo's .gitignore does for Git deploys).
+node_modules
+.next
+coverage
+*.tsbuildinfo
+# local secrets: Vercel takes its own environment variables
+.env*
+# hair strand files (~220 MB): production fetches them from Vercel Blob (src/data/hairBlob.json)
+public/models/hair/**/*.strands.bin
+public/models/hair/review
+# made by the build
+public/chrome

@@ -8,6 +8,7 @@
 import { useSyncExternalStore } from "react";
 
 import { RangeRow } from "@/components/ui/RangeRow";
+import { type Swatch, SwatchRow } from "@/components/ui/SwatchRow";
 import {
   onSkinDetailsChange,
   setSkinDetails,
@@ -17,6 +18,15 @@ import {
   skinDetailsSnapshot,
 } from "@/lib/skinDetails";
 import { MAX_MOLES } from "@/lib/skinShader";
+
+/** Blush colours; "" is the default rose. */
+const BLUSH_SHADES: readonly Swatch<string>[] = [
+  { id: "", label: "Rose", hex: "#e58a8e" },
+  { id: "#f0a08a", label: "Peach", hex: "#f0a08a" },
+  { id: "#e8806a", label: "Coral", hex: "#e8806a" },
+  { id: "#d8607a", label: "Berry", hex: "#d8607a" },
+  { id: "#c0707a", label: "Dusty rose", hex: "#c0707a" },
+];
 
 const pct = (v: number) => `${Math.round(v * 100)}%`;
 const times = (v: number) => `×${v.toFixed(2)}`;
@@ -29,6 +39,10 @@ export function SkinDetailsControl() {
         <span className="text-body text-ink">Skin details</span>
       </div>
       <RangeRow label="Blush" value={s.blush} min={0} max={1} step={0.05} reset={D.blush} low="none" high="flushed" format={pct} onChange={(blush) => setSkinDetails({ blush })} />
+      <div className={s.blush > 0 ? "transition-opacity" : "pointer-events-none opacity-40 transition-opacity"} aria-disabled={s.blush <= 0 || undefined}>
+        <SwatchRow title="Blush colour" groupLabel="Blush colour" swatches={BLUSH_SHADES} current={s.blushColour} onChoose={(blushColour) => setSkinDetails({ blushColour })} />
+        <RangeRow label="Blush spread" value={s.blushSpread} min={0} max={1} step={0.05} reset={D.blushSpread} low="cheek apples" high="across the nose" format={pct} onChange={(blushSpread) => setSkinDetails({ blushSpread })} />
+      </div>
       <RangeRow label="Freckles" value={s.freckles} min={0} max={1} step={0.05} reset={D.freckles} low="none" high="many" format={pct} onChange={(freckles) => setSkinDetails({ freckles })} />
       <RangeRow label="Moles" value={s.moles} min={0} max={MAX_MOLES} step={1} reset={D.moles} low="none" high={String(MAX_MOLES)} format={(v) => String(v)} onChange={(moles) => setSkinDetails({ moles })} />
       <div className={s.moles ? "transition-opacity" : "pointer-events-none opacity-40 transition-opacity"} aria-disabled={!s.moles || undefined}>
@@ -43,6 +57,7 @@ export function SkinDetailsControl() {
       <RangeRow label="Under the eyes" value={s.underEye} min={0} max={2} step={0.05} reset={D.underEye} low="bright" high="dark circles" mid format={times} onChange={(underEye) => setSkinDetails({ underEye })} />
       <RangeRow label="Tone variation" value={s.variation} min={0} max={2} step={0.05} reset={D.variation} low="even" high="blotchy" mid format={times} onChange={(variation) => setSkinDetails({ variation })} />
       <RangeRow label="Veins" value={s.veins} min={0} max={1} step={0.05} reset={D.veins} low="hidden" high="visible" format={pct} onChange={(veins) => setSkinDetails({ veins })} />
+      <RangeRow label="Eye rims" value={s.eyeRims} min={0} max={1} step={0.05} reset={D.eyeRims} low="clear" high="pink, raw" format={pct} onChange={(eyeRims) => setSkinDetails({ eyeRims })} />
       <RangeRow label="Wrinkles" value={s.wrinkles} min={0} max={1.5} step={0.05} reset={D.wrinkles} low="smooth" high="deep lines" format={pct} onChange={(wrinkles) => setSkinDetails({ wrinkles })} />
       <RangeRow label="Expression lines" value={s.expression} min={0} max={2} step={0.05} reset={D.expression} low="none" high="deep creases" mid format={times} onChange={(expression) => setSkinDetails({ expression })} />
       <div className="px-5 pt-2.5">

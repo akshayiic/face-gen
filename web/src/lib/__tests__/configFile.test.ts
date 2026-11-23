@@ -91,6 +91,7 @@ describe("config file", () => {
     // the file had no hair texture or scanned maps: the tab's are cleared, and so is any sculpt
     expect(remove).toEqual([
       TEXTURE_KEYS.hair, `${TEXTURE_KEYS.hair}:settings`,
+      TEXTURE_KEYS.skinMicro, `${TEXTURE_KEYS.skinMicro}:settings`,
       TEXTURE_KEYS.skinNormal, `${TEXTURE_KEYS.skinNormal}:settings`,
       TEXTURE_KEYS.skinRough, `${TEXTURE_KEYS.skinRough}:settings`,
       TEXTURE_KEYS.skinCavity, `${TEXTURE_KEYS.skinCavity}:settings`,

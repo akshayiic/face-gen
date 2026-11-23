@@ -54,6 +54,7 @@ const MAX_SCULPT_CHARS = 4_000_000;
 
 const SLOT_LABEL: Record<TextureSlot, string> = {
   skin: "Skin texture", hair: "Hair texture", skinNormal: "Skin normal map", skinRough: "Skin roughness map", skinCavity: "Skin cavity map",
+  skinMicro: "Fine skin texture (micro normal)",
 };
 
 // --- writing ---------------------------------------------------------------------------------------------------------
@@ -68,6 +69,7 @@ const words = (id: unknown) => (typeof id === "string" && id ? id.replace(/[-_]/
 
 function textureSummary(slot: TextureSlot, e: TextureEntry): string {
   const s = e.settings;
+  if (slot === "skinMicro") return `tiled every ${typeof s.tile === "number" ? Math.round(s.tile) : "?"} mm${s.invert === true ? ", relief inverted" : ""}`;
   if (slot !== "skin") return `strength ${pct(s.amount)}`;
   const mode = s.mode === "uv" ? "painted map (UV)" : `skin photo, tiled every ${typeof s.scale === "number" ? Math.round(s.scale) : "?"} mm`;
   return `${mode}, strength ${pct(s.amount)}${s.keepTone === false ? ", its own colours" : ", keeps the skin tone"}`;
@@ -90,6 +92,9 @@ export function configToMarkdown(c: ConfigFile, labels: Record<string, string> =
       ["Skin tone", words(ch.skin)],
       ["Eye colour", words(ch.eyes)],
       ["Hair", ch.hair.style === "none" ? "none" : `${ch.hair.style}, ${words(ch.hair.colour)}`],
+      ...(ch.hair.style !== "none" && ch.hair.tie
+        ? ([["Hair worn", `${{ down: "down", half: "half up", low: "low ponytail", high: "high ponytail", bun: "bun" }[ch.hair.tie] ?? ch.hair.tie}${ch.hair.tie !== "down" && ch.hair.framing ? ", face-framing strands loose" : ""}; volume ${num(ch.hair.volume)}, flyaways ${pct(ch.hair.frizz)}, shine ×${(ch.hair.shine ?? 1).toFixed(2)}, density ×${(ch.hair.density ?? 1).toFixed(2)}, strand thickness ×${(ch.hair.thickness ?? 1).toFixed(2)}`]] as [string, unknown][])
+        : []),
       ["Eyebrows", words(a.eyebrows)],
       ["Eyelashes", words(a.eyelashes)],
       ["Facial hair", a.facialHair && a.facialHair !== "none" ? `${words(a.facialHair)}${a.facialHairColour ? `, ${words(a.facialHairColour)}` : ""}` : "none"],
@@ -145,6 +150,12 @@ export function configToMarkdown(c: ConfigFile, labels: Record<string, string> =
       ["Lipstick", typeof d.lipColour === "string" && d.lipColour ? `${d.lipColour} at ${pct(d.lipOpacity)}` : "none"],
       ["Lip liner", typeof d.lipLiner === "number" && d.lipLiner > 0 ? `${pct(d.lipLiner)}, ${typeof d.lipLinerColour === "string" && d.lipLinerColour ? d.lipLinerColour : "automatic"}` : "none"],
       ["Lip finish", typeof d.lipGloss === "number" ? `×${d.lipGloss.toFixed(2)}` : "—"],
+      ["Fine skin texture", typeof d.microDetail === "number" && d.microDetail > 0 ? `×${d.microDetail.toFixed(2)}` : "off"],
+      ["Lip lines", typeof d.lipLines === "number" && d.lipLines > 0 ? pct(d.lipLines / 1.5) : "none"],
+      ["Blush", typeof d.blushColour === "string" && d.blushColour ? `${pct(d.blush)}, ${d.blushColour}, spread ${pct(d.blushSpread)}` : `${pct(d.blush)}, spread ${pct(d.blushSpread)}`],
+      ["Eye liner", typeof d.eyeLiner === "number" && d.eyeLiner > 0 ? `${pct(d.eyeLiner)}, ${d.eyeLinerColour}, wing ${pct(d.eyeLinerWing)}` : "none"],
+      ["Eye shadow", typeof d.eyeShadow === "number" && d.eyeShadow > 0 ? `${pct(d.eyeShadow)}, ${d.eyeShadowColour}` : "none"],
+      ["Lashes", typeof d.lashLength === "number" ? `length ×${d.lashLength.toFixed(2)}, curl ${num(d.lashCurl)}, fullness ×${(d.lashDensity as number).toFixed(2)}` : "—"],
     ]),
     "",
   );

@@ -26,6 +26,7 @@ import { attachCapsWorker } from "@/lib/morphs/capsClient";
 import { LimitGeometry } from "@/lib/morphs/limitGeometry";
 import { limiter, loadLimiter } from "@/lib/morphs/limiter";
 import { applyScanMaps } from "@/lib/scanMaps";
+import { applyMicro } from "@/lib/skinMicro";
 import { bindSculpt } from "@/lib/sculpt";
 import { bindSkinSurface } from "@/lib/skinSurface";
 import { headBytes } from "@/lib/headLoad";
@@ -176,6 +177,7 @@ export function Head() {
     applySkinDetails(); // blush, freckles, moles (placed on the skin bound above), pores (lib/skinDetails.ts)
     applySkinTexture(); // an uploaded skin texture, if this tab has one (lib/surfaceTextures.ts)
     applyScanMaps(); // scanned normal, roughness and cavity maps, if this tab has them (lib/scanMaps.ts)
+    applyMicro(); // the fine skin texture, if it is on (lib/skinMicro.ts)
     // The skin's maps (AO, regions, pores) arrive after the head is on screen: never on the first view's path.
     const skin = skinRig.material;
     // A quality drop (lib/quality.ts) turns the skin's pores off (lib/skinShader.ts).

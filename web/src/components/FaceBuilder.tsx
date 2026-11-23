@@ -17,6 +17,7 @@ import { SliderPanel } from "@/components/ui/SliderPanel";
 import { Toolbar } from "@/components/ui/Toolbar";
 import { SiteHeader } from "@/components/ui/SiteHeader";
 import { VoicePanel } from "@/components/ui/VoicePanel";
+
 import { addonRig, addonState, syncAddon } from "@/lib/addons";
 import { AGE, ageUniforms, setAge } from "@/lib/age";
 import { applyEmotion, configureEmotions, emotionRig, setEmotion, setSpeechActivity } from "@/lib/emotion";
@@ -42,6 +43,9 @@ import { finishSettings, setFinish } from "@/lib/finishSettings";
 import { apply as applyHairShadow, HAIR_SHADOW, hairShadowUniforms } from "@/lib/hairShadow";
 import { pieceFade } from "@/lib/pieceFade";
 import { setSkinTone, skinRig } from "@/lib/skin";
+
+/** The voice card is left out where the voice routes have no keys (set on that deployment, read at build time). */
+const VOICE_OFF = process.env.NEXT_PUBLIC_VOICE_OFF === "1";
 
 // Runs once when this client module loads: ranges, defaults and kinds for every slider.
 morphs.configure(sliders.sliders);
@@ -171,9 +175,12 @@ export function FaceBuilder() {
             relative (here and on the panel): absolute bits inside, like sr-only labels, stay in the scroller instead of
             stretching the page. */}
         <div className="relative -mx-px -mb-px flex flex-col gap-3 p-px lg:col-start-2 lg:-mt-px lg:min-h-0 lg:row-start-1 lg:overflow-hidden xl:contents">
-          <div className="shrink-0 xl:pointer-events-none xl:z-10 xl:col-start-1 xl:row-start-1 xl:m-4 xl:flex xl:max-h-[calc(100%-2rem)] xl:flex-col xl:self-end xl:justify-self-end">
-            <VoicePanel />
-          </div>
+          {/* NEXT_PUBLIC_VOICE_OFF=1 (a deployment without the voice API keys): no voice card, the face builder only */}
+          {!VOICE_OFF && (
+            <div className="shrink-0 xl:pointer-events-none xl:z-10 xl:col-start-1 xl:row-start-1 xl:m-4 xl:flex xl:max-h-[calc(100%-2rem)] xl:flex-col xl:self-end xl:justify-self-end">
+              <VoicePanel />
+            </div>
+          )}
           <section className="card shrink-0 lg:min-h-0 lg:flex-1 lg:overflow-hidden xl:col-start-2 xl:row-start-1" aria-label="Face sliders">
             <SliderPanel />
           </section>

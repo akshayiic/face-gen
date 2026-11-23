@@ -15,8 +15,17 @@ describe("finish settings", () => {
       clarity: FINISH_DEFAULTS.clarity,
       skin: FINISH_DEFAULTS.skin,
       light: FINISH_DEFAULTS.light,
+      backdrop: FINISH_DEFAULTS.backdrop,
     });
     expect(sanitizeFinish(null)).toEqual(FINISH_DEFAULTS);
     expect(sanitizeFinish({ on: false }).on).toBe(false);
+  });
+});
+
+describe("backdrop", () => {
+  it("takes a known backdrop and nothing else", () => {
+    expect(sanitizeFinish({ backdrop: "grey" }).backdrop).toBe("grey");
+    expect(sanitizeFinish({ backdrop: "toString" }).backdrop).toBe("page"); // not a backdrop, though `in` would say so
+    expect(sanitizeFinish({ backdrop: 3 }).backdrop).toBe("page");
   });
 });

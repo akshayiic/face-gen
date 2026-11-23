@@ -34,6 +34,13 @@
  *    pockmarks, burns and bruises. Each has its colour, height (bumped like the pores) and roughness.
  *  - Scanned maps in the head's UV layout (lib/surfaceTextures.ts): a tangent-space normal map (tangents from the UVs'
  *    screen derivatives), a roughness map and a cavity map, each with its own strength.
+ *  - Fine skin texture (lib/skinMicro.ts, SKIN_MICRO): a tiled slope map of the micro relief of skin (cells ~0.45 mm,
+ *    pores) laid over the face from three sides: bumped by the slope · the position's screen derivative, pits slightly
+ *    darker and without shine, a little roughness variation. Fades with distance through the map's mips.
+ *  - Lip lines: fine vertical furrows across both lips (lipLineH), faded out when a line is under ~3 pixels.
+ *  - Blush with its own colour, from the apples of the cheeks to across the bridge of the nose; eye makeup: a smudged
+ *    liner on the lash lines with a wing at the outer corner, and shadow on the lids (coordinates from the landmarks of
+ *    the ageing data: the eye opening is an ellipse of 12 × 4.6 mm).
  *  - Its alpha is uSkinAlpha: 0.5 only while the camera finish draws it (lib/finish.ts), to mark the skin for the
  *    subsurface blur; 1 everywhere else.
  *
@@ -143,6 +150,7 @@ export const skinUniforms = {
   uFreckles: { value: 0 },
   uPores: { value: 1 },
   uUnderEye: { value: 1 },
+  uEyeRims: { value: 0.25 }, // lib/skinDetails.ts eyeRims
   uMoles: { value: Array.from({ length: MAX_MOLES }, () => new Vector4()) }, // xyz: rest position (mm), w: radius (mm)
   uMoleCount: { value: 0 },
   // an uploaded skin texture (lib/surfaceTextures.ts), drawn while the material has USE_SKIN_TEX
@@ -192,6 +200,18 @@ export const skinUniforms = {
   uSkinCavityAmt: { value: 1 },
   // 0.5 while the camera finish draws the skin (its subsurface blur's mask, lib/finish.ts), else 1
   uSkinAlpha: { value: 1 },
+  // fine skin texture (lib/skinMicro.ts) and the makeup and lip details (lib/skinDetails.ts)
+  uSkinMicro: { value: null as Texture | null },
+  uMicro: { value: 0 },
+  uMicroTile: { value: 7.2 }, // mm one tile covers
+  uLipLines: { value: 0 },
+  uBlushTint: { value: new Vector3(1.0, 0.68, 0.7) }, // what the blush multiplies the skin by
+  uBlushSpread: { value: 0 },
+  uLiner: { value: 0 },
+  uLinerWing: { value: 0.5 },
+  uLinerColour: { value: new Color(0, 0, 0) }, // raw sRGB
+  uShadow: { value: 0 },
+  uShadowColour: { value: new Color(0, 0, 0) },
 };
 
 /** Push SKIN_SHADE into the uniforms after editing it (debug handle; the oil sheen lives on the material). */
@@ -246,7 +266,7 @@ uniform sampler2D uSkinDetail;
 uniform sampler2D uStubbleMap, uStubbleDetail;
 uniform float uStubbleLen, uStubbleShadow, uStubbleTile;
 uniform vec3 uStubbleColour;
-uniform float uBlush, uFreckles, uPores, uUnderEye;
+uniform float uBlush, uFreckles, uPores, uUnderEye, uEyeRims;
 uniform vec4 uMoles[${MAX_MOLES}];
 uniform int uMoleCount;
 uniform sampler2D uSkinTex;
@@ -262,6 +282,15 @@ uniform int uMarkCount;
 uniform sampler2D uSkinNormalMap, uSkinRoughMap, uSkinCavityMap;
 uniform float uSkinNormalAmt, uSkinRoughAmt, uSkinCavityAmt;
 uniform float uSkinAlpha;
+uniform sampler2D uSkinMicro;
+uniform float uMicro, uMicroTile, uLipLines, uBlushSpread, uLiner, uLinerWing, uShadow;
+uniform vec3 uBlushTint, uLinerColour, uShadowColour;
+// the fine skin texture, read once in the colour step and bumped in the normal step: each projection plane's slope,
+// the blend between planes, how much it counts here, the pore mask and the roughness variation
+vec2 skinMG0 = vec2(0.0), skinMG1 = vec2(0.0), skinMG2 = vec2(0.0);
+vec3 skinMW = vec3(0.0);
+float skinMicroAmt = 0.0, skinMicroPore = 0.0, skinMicroRough = 0.5;
+float lipLineH = 0.0; // the lip lines' height (−1 in a groove … 0), × lipLines in the normal step
 float markH = 0.0; // the marks' and sweat's height (mm), set in the colour step, bumped in the normal step
 float markRough = 1.0; // × roughness (scars shine, scabs are matte)
 float markSmooth = 0.0; // 0..1: no pores here (scar tissue)
@@ -367,6 +396,17 @@ const REGIONS = /* glsl */ `
     vec3 linerC = uLipLinerAuto > 0.5 ? (uLipAmt > 0.0 ? lipC : diffuseColor.rgb) * 0.5 : sRGBTransferEOTF(vec4(uLipLinerColour, 1.0)).rgb;
     diffuseColor.rgb = mix(diffuseColor.rgb, linerC, clamp(lipRing * uLipLiner * 1.4, 0.0, 1.0));
   }
+  if (uLipLines > 0.0) {
+    // lip lines: fine vertical furrows across both lips, tilting out a little from the mouth's middle, each line its own
+    // length, some positions with none; faded out when a line is under ~3 pixels
+    float lipZone = smoothstep(212.0, 220.0, vRest.y) * (1.0 - smoothstep(250.0, 257.0, vRest.y)) * (1.0 - smoothstep(27.0, 34.0, abs(vRest.x))) * smoothstep(88.0, 100.0, vRest.z);
+    float lx = vRest.x * (1.0 + 0.045 * abs(vRest.y - 231.0)) / 0.52 + 0.7 * (ageNoise(vec3(vRest.y * 0.45, 3.0, vRest.x * 0.08)) - 0.5);
+    float lc = floor(lx);
+    float groove = pow(0.5 + 0.5 * cos(6.2831853 * lx), 5.0) * step(0.3, skinHash3(vec3(lc, 4.0, 1.0)).x) * smoothstep(0.25, 0.7, ageNoise(vec3(lc * 1.7, vRest.y * 0.35, 9.0)));
+    float lpx = max(length(fwidth(vRest)), 1e-4); // mm per pixel here
+    lipLineH = -groove * skinLip * lipZone * (1.0 - smoothstep(0.06, 0.2, lpx));
+    diffuseColor.rgb *= 1.0 - 0.18 * uLipLines * (-lipLineH);
+  }
   {
     // round the eyes (vRest is in mm): under the eye (towards the inner corner) and the upper lid crease
     vec2 e = vec2(abs(vRest.x) - 30.9, vRest.y - 303.2);
@@ -374,6 +414,38 @@ const REGIONS = /* glsl */ `
     float crease = 0.5 * exp(-pow(e.x / 16.0, 2.0) - pow((e.y - 9.0) / 4.5, 2.0));
     float front = smoothstep(55.0, 80.0, vRest.z);
     diffuseColor.rgb *= mix(vec3(1.0), vec3(0.8, 0.73, 0.77), clamp((under + crease) * front * uUnderEye, 0.0, 1.0) * uEyeShadow);
+    // the lid edges: thin, blood-rich skin just round the eye opening (an ellipse between the corners) goes pink
+    vec2 o = vec2((abs(vRest.x) - 32.2) / 12.5, (vRest.y - 300.6) / 4.6);
+    float ell = length(o);
+    float rim = exp(-pow((ell - 1.12) / 0.2, 2.0)) * front * (0.75 + 0.25 * smoothstep(0.3, -0.6, o.x)); // a little more at the inner corner
+    diffuseColor.rgb *= mix(vec3(1.0), vec3(1.0, 0.68, 0.68), clamp(rim * uEyeRims, 0.0, 1.0));
+    if (uLiner > 0.0 || uShadow > 0.0) {
+      // eye makeup. dmm: how far (mm) outside the eye opening's edge this is; the opening is the ellipse above
+      float dmm = (ell - 1.0) * ell / max(length(vec2(o.x / 12.5, o.y / 4.6)), 1e-3);
+      float upper = smoothstep(-0.1, 0.35, o.y);
+      float outer = smoothstep(-0.9, 0.9, o.x);
+      if (uLiner > 0.0) {
+        // a smudged liner on the lash lines: thick and dark above, thin and light below, the wing at the outer corner
+        float thick = (0.5 + 0.9 * outer) * (0.7 + 0.6 * uLiner);
+        float band = smoothstep(-0.5, 0.15, dmm) * (1.0 - smoothstep(thick * 0.6, thick * 1.3, dmm)) * smoothstep(-1.15, -0.65, o.x);
+        float lowerBand = smoothstep(-0.5, 0.1, dmm) * (1.0 - smoothstep(0.25, 0.7, dmm)) * smoothstep(-0.2, 0.7, o.x) * 0.45;
+        vec2 wd = normalize(vec2(1.0, 0.38));
+        vec2 wp = vec2(abs(vRest.x) - 43.4, vRest.y - 300.4);
+        float wu = dot(wp, wd), wv = dot(wp, vec2(-wd.y, wd.x));
+        float wl = 3.0 + 9.0 * uLinerWing;
+        float wing = smoothstep(-0.5, 0.5, wu) * (1.0 - smoothstep(wl - 1.5, wl, wu)) * (1.0 - smoothstep(mix(1.1, 0.12, clamp(wu / wl, 0.0, 1.0)) * 0.7, mix(1.1, 0.12, clamp(wu / wl, 0.0, 1.0)) * 1.15, abs(wv))) * step(0.01, uLinerWing);
+        float halo = exp(-pow(dmm / (1.5 + 1.8 * uLiner), 2.0)) * upper * 0.28; // the smoke round it
+        vec3 linerC = sRGBTransferEOTF(vec4(uLinerColour, 1.0)).rgb;
+        float lm = clamp(band * upper + lowerBand * (1.0 - upper) + wing + halo, 0.0, 1.0);
+        diffuseColor.rgb = mix(diffuseColor.rgb, linerC, lm * front * clamp(uLiner * 1.6, 0.0, 1.0));
+      }
+      if (uShadow > 0.0) {
+        // shadow on the lid: from the lash line up towards the crease, over the eye's width
+        float sh = upper * smoothstep(0.3, 1.4, dmm) * (1.0 - smoothstep(4.5, 8.5, dmm)) * smoothstep(-1.05, -0.55, o.x) * (1.0 - smoothstep(0.95, 1.6, o.x));
+        vec3 shadowC = sRGBTransferEOTF(vec4(uShadowColour, 1.0)).rgb;
+        diffuseColor.rgb = mix(diffuseColor.rgb, shadowC, clamp(sh * front * uShadow * 0.75, 0.0, 1.0));
+      }
+    }
   }
 #ifdef USE_SKIN_TEX
   // its own colours (a painted map): over everything the tone made
@@ -381,9 +453,12 @@ const REGIONS = /* glsl */ `
 #endif
   {
     // blush: the apples of the cheeks, soft-edged, never on the lips
+    // (spread: the apples widen, and a flush comes over the bridge of the nose)
     vec2 bc = vec2(abs(vRest.x) - 44.0, vRest.y - 271.0);
-    float cheek = exp(-dot(bc, bc) / (2.0 * 15.0 * 15.0)) * smoothstep(55.0, 85.0, vRest.z);
-    diffuseColor.rgb *= mix(vec3(1.0), vec3(1.0, 0.68, 0.7), clamp(cheek * uBlush * (1.0 - skinLip), 0.0, 1.0));
+    float sg = 15.0 + 9.0 * uBlushSpread;
+    vec2 nb = vec2(vRest.x / 9.0, (vRest.y - 279.0) / 17.0);
+    float cheek = max(exp(-dot(bc, bc) / (2.0 * sg * sg)), 0.7 * uBlushSpread * exp(-dot(nb, nb))) * smoothstep(55.0, 85.0, vRest.z);
+    diffuseColor.rgb *= mix(vec3(1.0), uBlushTint, clamp(cheek * uBlush * (1.0 - skinLip), 0.0, 1.0));
   }
   if (uFreckles > 0.0) {
     // freckles: thickest over the nose bridge and the upper cheeks, a few across the rest of the face
@@ -534,6 +609,26 @@ const REGIONS = /* glsl */ `
 #ifdef USE_SKIN_CAVITY_MAP
   diffuseColor.rgb *= mix(1.0, texture2D(uSkinCavityMap, vAoMapUv).r, 0.5 * uSkinCavityAmt);
 #endif
+#ifdef SKIN_MICRO
+  if (uMicro > 0.0) {
+    // the fine skin texture from three sides (the same blend as the pores): slopes (stored 0.5 ± 2 → ×4 − 2 … see
+    // lib/skinMicro.ts MICRO.slopeRange), pore mask, roughness variation
+    vec3 mw = pow(abs(normalize(vSkinN)), vec3(4.0));
+    mw /= mw.x + mw.y + mw.z;
+    vec4 m0 = texture2D(uSkinMicro, vRest.zy / uMicroTile);
+    vec4 m1 = texture2D(uSkinMicro, vRest.xz / uMicroTile);
+    vec4 m2 = texture2D(uSkinMicro, vRest.xy / uMicroTile);
+    skinMW = mw;
+    skinMG0 = (m0.rg - 0.5) * 4.0;
+    skinMG1 = (m1.rg - 0.5) * 4.0;
+    skinMG2 = (m2.rg - 0.5) * 4.0;
+    skinMicroPore = m0.b * mw.x + m1.b * mw.y + m2.b * mw.z;
+    skinMicroRough = m0.a * mw.x + m1.a * mw.y + m2.a * mw.z;
+    // on the face's skin (the pores' own mask), a little on the lips, none in scar tissue
+    skinMicroAmt = uMicro * max(smoothstep(0.2, 0.5, skinReg.b) * skinReg.a, 0.3 * skinLip) * (1.0 - markSmooth);
+    diffuseColor.rgb *= mix(vec3(1.0), vec3(0.88, 0.84, 0.84), clamp(skinMicroPore * skinMicroAmt, 0.0, 1.0)); // the pits are a touch darker
+  }
+#endif
 #ifdef USE_STUBBLE
   {
     // stubble: the mask says where (and how patchy), the follicle texture (on the rest position from three sides, like
@@ -566,6 +661,9 @@ const ROUGHNESS = /* glsl */ `
   // the lips' finish: 0 matte (rougher), 1 as they are, 2 high gloss (smoother)
   roughnessFactor = mix(roughnessFactor, uLipRough * (uLipGloss < 1.0 ? mix(2.4, 1.0, uLipGloss) : mix(1.0, 0.45, uLipGloss - 1.0)), skinLip);
   roughnessFactor *= 1.0 + uRoughVar * (ageNoise(vRest * 0.3 + 5.0) - 0.5) * 2.0;
+#ifdef SKIN_MICRO
+  roughnessFactor += (skinMicroRough - 0.5) * 0.22 * skinMicroAmt; // cell tops a little glossier than the furrows
+#endif
 #ifdef USE_SKIN_ROUGH_MAP
   roughnessFactor = mix(roughnessFactor, texture2D(uSkinRoughMap, vAoMapUv).g, uSkinRoughAmt);
 #endif
@@ -614,6 +712,16 @@ skinCavity *= mix(1.0, texture2D(uSkinCavityMap, vAoMapUv).r, uSkinCavityAmt);
   skinCavity *= mix(1.0, smoothstep(0.1, 0.5, hd), clamp(depth / max(uDetailDepth, 1e-4), 0.0, 1.0) * uCavity);
 }
 #endif
+#ifdef SKIN_MICRO
+if (uMicro > 0.0) {
+  // the fine skin texture: the height change per screen pixel is the slope · the plane position's change, per plane
+  float mhx = skinMW.x * dot(skinMG0, dFdx(vRest.zy)) + skinMW.y * dot(skinMG1, dFdx(vRest.xz)) + skinMW.z * dot(skinMG2, dFdx(vRest.xy));
+  float mhy = skinMW.x * dot(skinMG0, dFdy(vRest.zy)) + skinMW.y * dot(skinMG1, dFdy(vRest.xz)) + skinMW.z * dot(skinMG2, dFdy(vRest.xy));
+  normal = skinBumpGrad(-vViewPosition, normal, vec2(mhx, mhy) * skinMicroAmt, faceDirection);
+  skinCavity *= 1.0 - 0.45 * clamp(skinMicroPore * skinMicroAmt, 0.0, 1.0); // no shine at the bottom of a pore
+}
+#endif
+if (uLipLines > 0.0) normal = ageBump(-vViewPosition, normal, lipLineH * 0.085 * uLipLines, faceDirection); // the furrows, ~0.085 mm deep
 // scars, cuts, burns and sweat droplets (heights from the colour step); a uniform test, so the derivatives stay valid
 if (uMarkCount > 0 || uSweat > 0.0) normal = ageBump(-vViewPosition, normal, markH, faceDirection);
 #ifdef USE_STUBBLE
@@ -631,6 +739,15 @@ diffuseColor.rgb = mix(diffuseColor.rgb, scalpC, clamp(vHairCover, 0.0, 1.0) * u
 // Helpers for the weathering and the scanned maps: after DECL and lib/age.ts, so skinHash3 and ageNoise exist
 // (installSkinShader puts them just before main).
 const HELPERS = /* glsl */ `
+// Bump from the change in height per screen pixel (mm) instead of a height: for the fine skin texture, whose slopes are
+// stored. Same maths as lib/age.ts ageBump (Mikkelsen's surface gradient).
+vec3 skinBumpGrad(vec3 surfPos, vec3 n, vec2 dh, float faceDir) {
+  vec3 sx = dFdx(surfPos), sy = dFdy(surfPos);
+  vec3 r1 = cross(sy, n), r2 = cross(n, sx);
+  float det = dot(sx, r1) * faceDir;
+  vec2 d = dh * 0.001; // mm -> m
+  return normalize(abs(det) * n - sign(det) * (d.x * r1 + d.y * r2));
+}
 // Sun spots: one candidate per 6 mm cell (like the freckles, bigger, with ragged edges).
 float skinSpots(vec3 p, float density) {
   vec3 g = p / 6.0;
@@ -757,7 +874,7 @@ export function installSkinShader(material: MeshPhysicalMaterial): void {
       .replace("#include <dithering_fragment>", ALPHA)
       .replace("void main() {", HELPERS + "void main() {");
   };
-  material.customProgramCacheKey = () => "skin-v14";
+  material.customProgramCacheKey = () => "skin-v15";
   // the hair's shadow (lib/hairShadow.ts): head-space matrices for the camera drawing it, on the tiers that have it
   // and the expression's wrinkles (lib/age.ts), from the weights the face shows this frame
   material.onBeforeRender = (_r, _s, camera) => {

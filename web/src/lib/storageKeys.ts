@@ -19,6 +19,8 @@ export const SCULPT_KEY = "ftv-sculpt";
  */
 export const TEXTURE_KEYS = {
   skin: "ftv-skin-texture", hair: "ftv-hair-texture",
+  // the fine skin texture: a tileable micro normal map (lib/skinMicro.ts)
+  skinMicro: "ftv-skin-micro",
   // scanned maps in the head's UV layout (normal, roughness, cavity)
   skinNormal: "ftv-skin-normal", skinRough: "ftv-skin-rough", skinCavity: "ftv-skin-cavity",
 } as const;

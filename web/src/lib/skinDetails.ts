@@ -1,7 +1,9 @@
 /**
  * Skin details (Style tab → Colouring): blush, freckles, moles, how deep the pores read, how dark it is under the
  * eyes, how uneven the tone is and how much the veins show; wrinkles at any age and how much expressions crease the
- * skin (lib/age.ts); and weathering: sun damage, sun spots, broken capillaries, oiliness, sweat and grime.
+ * skin (lib/age.ts); weathering: sun damage, sun spots, broken capillaries, oiliness, sweat and grime; the fine skin
+ * texture (lib/skinMicro.ts), lip lines, a coloured blush that can spread over the nose, eye makeup (liner, wing,
+ * shadow) and the lashes' length, curl and fullness (lib/lashLook.ts).
  * Plain module state pushed into the skin shader's uniforms (lib/skinShader.ts), kept in sessionStorage like the
  * tone, and carried by the rebuild link. The baked colour in the .glb export picks all of it up (it draws the skin's
  * own shader into its UVs).
@@ -11,6 +13,8 @@
  * one. Places are drawn from the face, ears and neck, never on the lips, the eyes or inside the nostrils.
  */
 import { setWrinkleSettings } from "@/lib/age";
+import { lashLook } from "@/lib/lashLook";
+import { applyMicro } from "@/lib/skinMicro";
 import { MAX_MOLES, skinUniforms } from "@/lib/skinShader";
 import { skinSurface } from "@/lib/skinSurface";
 import { STORAGE_KEYS } from "@/lib/storageKeys";
@@ -33,6 +37,8 @@ export type SkinDetails = {
   variation: number;
   /** 0..1: veins under thin skin (temples, under the eyes, neck) */
   veins: number;
+  /** 0..1: pink, raw lid edges round the eyes (thin skin, the lid margins' blood) */
+  eyeRims: number;
   /** 0..1.5: wrinkles at any age, as if this much older on the Age slider */
   wrinkles: number;
   /** 0..2: how deep expressions crease the skin (frown lines, crow's feet …); 1 is natural */
@@ -54,12 +60,33 @@ export type SkinDetails = {
   lipLinerColour: string;
   /** … and the finish, 0..2: 0 matte, 1 the shader's own moist lips, 2 high gloss. */
   lipGloss: number;
+  /** 0..2: the fine skin texture's strength (pores and furrows a fraction of a millimetre across; 0 = off) */
+  microDetail: number;
+  /** 0..1.5: fine vertical lines on the lips */
+  lipLines: number;
+  /** The blush's colour ("#rrggbb"; "" = the default rose), and 0..1 how far it spreads (cheek apples … over the nose). */
+  blushColour: string;
+  blushSpread: number;
+  /** Eye makeup: the liner's strength (0..1), the wing's length (0..1) and its colour … */
+  eyeLiner: number;
+  eyeLinerWing: number;
+  eyeLinerColour: string;
+  /** … and the lid shadow's strength (0..1) and colour. */
+  eyeShadow: number;
+  eyeShadowColour: string;
+  /** The lashes: 0.6..1.8 × their length, −1..1 curl (down … up), 0..2 × their fullness (lib/lashLook.ts). */
+  lashLength: number;
+  lashCurl: number;
+  lashDensity: number;
 };
 
 export const SKIN_DETAILS_DEFAULTS: SkinDetails = {
-  blush: 0, freckles: 0, moles: 0, moleSize: 0.4, moleSeed: 1, pores: 1, underEye: 1, variation: 1, veins: 0.4,
+  blush: 0, freckles: 0, moles: 0, moleSize: 0.4, moleSeed: 1, pores: 1, underEye: 1, variation: 1, veins: 0.4, eyeRims: 0.25,
   wrinkles: 0, expression: 1, sun: 0, sunSpots: 0, capillaries: 0, oiliness: 1, sweat: 0, grime: 0,
   lipColour: "", lipOpacity: 0.85, lipLiner: 0, lipLinerColour: "", lipGloss: 1,
+  microDetail: 0, lipLines: 0, blushColour: "", blushSpread: 0,
+  eyeLiner: 0, eyeLinerWing: 0.5, eyeLinerColour: "#1c1517", eyeShadow: 0, eyeShadowColour: "#7a5a52",
+  lashLength: 1, lashCurl: 0, lashDensity: 1,
 };
 export const skinDetails: SkinDetails = { ...SKIN_DETAILS_DEFAULTS };
 
@@ -83,6 +110,7 @@ export function sanitizeSkinDetails(raw: unknown): SkinDetails {
     underEye: clamp(r.underEye, 0, 2, d.underEye),
     variation: clamp(r.variation, 0, 2, d.variation),
     veins: clamp(r.veins, 0, 1, d.veins),
+    eyeRims: clamp(r.eyeRims, 0, 1, d.eyeRims),
     wrinkles: clamp(r.wrinkles, 0, 1.5, d.wrinkles),
     expression: clamp(r.expression, 0, 2, d.expression),
     sun: clamp(r.sun, 0, 1, d.sun),
@@ -96,6 +124,18 @@ export function sanitizeSkinDetails(raw: unknown): SkinDetails {
     lipLiner: clamp(r.lipLiner, 0, 1, d.lipLiner),
     lipLinerColour: hex(r.lipLinerColour),
     lipGloss: clamp(r.lipGloss, 0, 2, d.lipGloss),
+    microDetail: clamp(r.microDetail, 0, 2, d.microDetail),
+    lipLines: clamp(r.lipLines, 0, 1.5, d.lipLines),
+    blushColour: hex(r.blushColour),
+    blushSpread: clamp(r.blushSpread, 0, 1, d.blushSpread),
+    eyeLiner: clamp(r.eyeLiner, 0, 1, d.eyeLiner),
+    eyeLinerWing: clamp(r.eyeLinerWing, 0, 1, d.eyeLinerWing),
+    eyeLinerColour: hex(r.eyeLinerColour) || d.eyeLinerColour,
+    eyeShadow: clamp(r.eyeShadow, 0, 1, d.eyeShadow),
+    eyeShadowColour: hex(r.eyeShadowColour) || d.eyeShadowColour,
+    lashLength: clamp(r.lashLength, 0.6, 1.8, d.lashLength),
+    lashCurl: clamp(r.lashCurl, -1, 1, d.lashCurl),
+    lashDensity: clamp(r.lashDensity, 0, 2, d.lashDensity),
   };
 }
 
@@ -125,6 +165,20 @@ export function setSkinDetails(patch: Partial<SkinDetails>): void {
 export const shuffleMoles = () => setSkinDetails({ moleSeed: 1 + Math.floor(Math.random() * 2 ** 30) });
 
 /** A colour uniform holding "#rrggbb" as raw sRGB 0..1 (the shader converts it, like uScalpColour). */
+/**
+ * What a blush colour multiplies the skin by: the colour's own ratios (relative to its red, in linear light) half way to
+ * white, so a pink flushes the cheeks pink and a peach peach, and the strength slider does the rest. "" is the default
+ * rose (1, 0.68, 0.7).
+ */
+export function blushTint(h: string): [number, number, number] {
+  if (!h) return [1, 0.68, 0.7];
+  const lin = [1, 3, 5].map((i) => {
+    const c = parseInt(h.slice(i, i + 2), 16) / 255;
+    return c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+  });
+  return lin.map((v) => 1 - 0.55 * (1 - Math.min(1, v / Math.max(lin[0], 1e-3)))) as [number, number, number];
+}
+
 function setRawSrgb(c: { r: number; g: number; b: number }, h: string): void {
   c.r = parseInt(h.slice(1, 3), 16) / 255;
   c.g = parseInt(h.slice(3, 5), 16) / 255;
@@ -138,6 +192,7 @@ export function applySkinDetails(): void {
   u.uFreckles.value = skinDetails.freckles;
   u.uPores.value = skinDetails.pores;
   u.uUnderEye.value = skinDetails.underEye;
+  u.uEyeRims.value = skinDetails.eyeRims;
   u.uMottle.value = skinDetails.variation;
   u.uVeins.value = skinDetails.veins;
   u.uSun.value = skinDetails.sun;
@@ -153,6 +208,20 @@ export function applySkinDetails(): void {
   u.uLipLinerAuto.value = skinDetails.lipLinerColour ? 0 : 1;
   setRawSrgb(u.uLipLinerColour.value, skinDetails.lipLinerColour || "#000000");
   u.uLipGloss.value = skinDetails.lipGloss;
+  u.uMicro.value = skinDetails.microDetail;
+  applyMicro(); // the fine texture and its define (once the amount is above zero)
+  u.uLipLines.value = skinDetails.lipLines;
+  u.uBlushTint.value.set(...blushTint(skinDetails.blushColour));
+  u.uBlushSpread.value = skinDetails.blushSpread;
+  u.uLiner.value = skinDetails.eyeLiner;
+  u.uLinerWing.value = skinDetails.eyeLinerWing;
+  setRawSrgb(u.uLinerColour.value, skinDetails.eyeLinerColour);
+  u.uShadow.value = skinDetails.eyeShadow;
+  setRawSrgb(u.uShadowColour.value, skinDetails.eyeShadowColour);
+  lashLook.length = skinDetails.lashLength;
+  lashLook.curl = skinDetails.lashCurl;
+  lashLook.density = skinDetails.lashDensity;
+  lashLook.apply?.(); // the lash strands on the head (lib/addons.ts)
   setWrinkleSettings(skinDetails.wrinkles, skinDetails.expression);
   const spots = molePlaces(skinDetails.moleSeed);
   const n = Math.min(skinDetails.moles, spots.length);

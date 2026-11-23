@@ -87,12 +87,18 @@ export const hairRig = {
 };
 /** What a first visit shows; also what the server renders, so the control hydrates cleanly. */
 /** How the hair is worn: lib/hairShape.ts (tie, framing, volume) and the strand shader's frizz (0..1) and shine (0..2). */
-export type HairWear = HairShape & { frizz: number; shine: number };
-export const HAIR_WEAR_DEFAULTS: HairWear = { ...HAIR_SHAPE_DEFAULTS, frizz: 0.25, shine: 1 };
+export type HairWear = HairShape & { frizz: number; shine: number; density: number; thickness: number };
+export const HAIR_WEAR_DEFAULTS: HairWear = { ...HAIR_SHAPE_DEFAULTS, frizz: 0.25, shine: 1, density: 1, thickness: 1 };
 export function sanitizeHairWear(raw: unknown): HairWear {
   const r = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
   const num = (v: unknown, lo: number, hi: number, d: number) => (typeof v === "number" && Number.isFinite(v) ? Math.min(hi, Math.max(lo, v)) : d);
-  return { ...sanitizeHairShape(r), frizz: num(r.frizz, 0, 1, HAIR_WEAR_DEFAULTS.frizz), shine: num(r.shine, 0, 2, HAIR_WEAR_DEFAULTS.shine) };
+  return {
+    ...sanitizeHairShape(r),
+    frizz: num(r.frizz, 0, 1, HAIR_WEAR_DEFAULTS.frizz),
+    shine: num(r.shine, 0, 2, HAIR_WEAR_DEFAULTS.shine),
+    density: num(r.density, 0, 2, HAIR_WEAR_DEFAULTS.density), // × the child strands the quality tier draws
+    thickness: num(r.thickness, 0.5, 1.8, HAIR_WEAR_DEFAULTS.thickness), // × each strand's width
+  };
 }
 
 export const HAIR_DEFAULTS = { style: DEFAULT_STYLE as HairStyle, colour: "natural" as HairColourId, ...HAIR_WEAR_DEFAULTS };
@@ -127,6 +133,7 @@ const notify = (blendSeconds = 0) => {
   snapshot = {
     style: hairState.style, colour: hairState.colour, loading: hairRig.loading, failed: hairRig.failed, filesMissing: hairRig.filesMissing,
     tie: hairState.tie, framing: hairState.framing, volume: hairState.volume, frizz: hairState.frizz, shine: hairState.shine,
+    density: hairState.density, thickness: hairState.thickness,
   };
   for (const fn of listeners) fn(blendSeconds);
 };
@@ -262,7 +269,9 @@ function applyWear(group: Group): void {
   const key = JSON.stringify(shape);
   const reshape = group.userData.reshape as ((s: HairShape) => boolean) | undefined;
   if (reshape && group.userData.shapeKey !== key && reshape(shape)) group.userData.shapeKey = key;
-  (group.userData.setLook as ((l: { frizz: number; shine: number }) => void) | undefined)?.({ frizz: hairState.frizz, shine: hairState.shine });
+  (group.userData.setLook as ((l: Partial<Pick<HairWear, "frizz" | "shine" | "density" | "thickness">>) => void) | undefined)?.({
+    frizz: hairState.frizz, shine: hairState.shine, density: hairState.density, thickness: hairState.thickness,
+  });
 }
 
 let wearFrame = 0;

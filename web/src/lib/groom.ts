@@ -20,7 +20,9 @@
  *
  * Re-shaping (head hair: lib/hairShape.ts): the group's `userData.reshape(shape)` ties the style back or changes its
  * volume by rewriting the strands' position texture from the file's points (the shadow volume follows), and
- * `userData.setLook({ frizz, shine })` sets the shader's frizz and shine.
+ * `userData.setLook({ frizz, shine, density, thickness, length, curl })` (any of them, every groom) sets how it is
+ * worn: the shader's flyaways and shine, the number of strands (density × the tier's child strands) and their width,
+ * and a lash's length and curl.
  *
  * Tweak the look in GROOM.
  */
@@ -53,7 +55,7 @@ import {
 
 import { manifest } from "@/lib/data";
 import { eyeUniforms } from "@/lib/eyeShader";
-import { applyHairShadowTier, HAIR_SHADOW_DECL, hairShadowUniforms, registerHairShadow, releaseHairShadowTier, updateHairShadow } from "@/lib/hairShadow";
+import { bakeHairShade, registerHairShadow, updateHairShadow } from "@/lib/hairShadow";
 import { type HairShape, isPlainShape, type Scalp, scalpLookup, shapeStrands } from "@/lib/hairShape";
 import { morphs } from "@/lib/morphs/store";
 import type { StrandColours } from "@/lib/hair";
@@ -94,6 +96,7 @@ export const GROOM = {
   lashTurn: 2.0, // lashes turn this many times the angle the lid edge travels round the eyeball (closed lid → lashes down)
   tt: 0.35, // light through backlit strands (× the light, the hair colour); brows and lashes get a third
   glint: 0.6, // how unevenly the secondary highlight sparkles along a strand (0 = an even sheen)
+  sheenTint: 0.7, // how blue-white the highlights of dark hair are (0 = plain white); light hair's stay neutral
 };
 
 /** The skin's radius round the head centre (lib/hairShape.ts), for the skin registration it was made from. */
@@ -262,20 +265,22 @@ export async function buildGroom(
 
   const material = new ShaderMaterial({
     vertexShader: VERTEX,
-    fragmentShader: FRAGMENT.replace("#include <lights_pars_begin>", "#include <lights_pars_begin>\n" + HAIR_SHADOW_DECL),
+    fragmentShader: FRAGMENT,
     lights: true,
     side: DoubleSide,
     // `soft` (lashes): real blending instead of alpha-to-coverage, whose on/off samples show as a screen-door dither
     // on hairs this faint and packed; lashes are thin and dark, so drawing them unsorted over each other is fine.
     alphaToCoverage: !soft,
     ...(soft ? { transparent: true, depthWrite: false } : {}),
-    // `fine` (brows, lashes): hairs finer than a pixel draw on some of its samples (coverMin < 1) and must not write their
-    // coverage into the frame's alpha, or the faded hairs read pale (the frame composites over the light backdrop).
-    // Colour replaces, alpha keeps the skin's.
+    // `fine` (brows, lashes): hairs finer than a pixel draw on some of its samples (coverMin < 1). They sit on skin, so
+    // the frame's alpha keeps the skin's and ADDS their coverage: never lower than the skin's (the faded hairs don't
+    // read pale), and enough above the skin flag the camera finish writes (alpha 0.5, lib/finish.ts) that the
+    // translucency blur takes a hair's pixel for hair, not skin (with the skin's alpha untouched the blur smeared the
+    // brows and lashes away).
     ...(soft
-      ? { blending: CustomBlending, blendEquation: AddEquation, blendSrc: SrcAlphaFactor, blendDst: OneMinusSrcAlphaFactor, blendSrcAlpha: ZeroFactor, blendDstAlpha: OneFactor }
+      ? { blending: CustomBlending, blendEquation: AddEquation, blendSrc: SrcAlphaFactor, blendDst: OneMinusSrcAlphaFactor, blendSrcAlpha: OneFactor, blendDstAlpha: OneFactor }
       : fine
-        ? { blending: CustomBlending, blendEquation: AddEquation, blendSrc: OneFactor, blendDst: ZeroFactor, blendSrcAlpha: ZeroFactor, blendDstAlpha: OneFactor }
+        ? { blending: CustomBlending, blendEquation: AddEquation, blendSrc: OneFactor, blendDst: ZeroFactor, blendSrcAlpha: OneFactor, blendDstAlpha: OneFactor }
         : {}),
     uniforms: UniformsUtils.merge([
       UniformsLib.lights,
@@ -319,13 +324,15 @@ export async function buildGroom(
         uRampAmount: { value: GROOM.rampAmount },
         uFrizz: { value: 0 },
         uShine: { value: 1 },
+        uLashLen: { value: 1 },
+        uLashCurl: { value: 0 },
+        uSheenTint: { value: GROOM.sheenTint },
         uTT: { value: GROOM.tt * (fine || soft ? 0.33 : 1) },
         uGlint: { value: GROOM.glint },
       },
     ]),
   });
-  // the hair's shadow volume (lib/hairShadow.ts), shared by reference: head hair and beards shade themselves with it
-  Object.assign(material.uniforms, hairShadowUniforms);
+
   // Textures and the shared colour uniforms go in after the merge (it would clone them).
   material.uniforms.uPos.value = pos.tex;
   material.uniforms.uRoot.value = root.tex;
@@ -358,10 +365,12 @@ export async function buildGroom(
   mesh.userData.groom = true;
   mesh.userData.groomDef = def; // the 3D model export rebuilds the strands from it (lib/export/strands.ts)
 
+  // how this groom is worn (userData.setLook): fewer or more child strands than the tier's, thinner or thicker strands
+  const look = { frizz: 0, shine: 1, density: 1, thickness: 1, length: 1, curl: 0 };
   const applyTier = () => {
     const { children, widthScale } = tierCount(def);
-    geometry.instanceCount = n * (1 + children);
-    material.uniforms.uWidth.value = (def.widthMm / 1000) * widthScale;
+    geometry.instanceCount = n * (1 + Math.round(children * look.density));
+    material.uniforms.uWidth.value = (def.widthMm / 1000) * widthScale * look.thickness;
   };
   applyTier();
 
@@ -406,12 +415,22 @@ export async function buildGroom(
   const ribbon = tierCount(def);
   const shadowWidth = def.widthMm * ribbon.widthScale * (1 + ribbon.children);
   const unshadow = casts ? registerHairShadow(group, { positions, n, p, width: shadowWidth }) : () => {};
-  if (casts) applyHairShadowTier(material);
   if (tintScalp) {
     // tied back, fuller, flatter (lib/hairShape.ts): from the file's points every time
+    let bakeTimer: ReturnType<typeof setTimeout> | undefined;
     group.userData.reshape = (shape: HairShape): boolean => {
       const scalp = scalpNow();
       const res = !isPlainShape(shape) && scalp ? shapeStrands(positions, shade, n, p, shape, scalp) : { positions, shade };
+      // re-shaped strands: their self-shadow baked again from where they are now (the file's is for the style as filed),
+      // once the shape stops changing (a slider drag moves the strands every frame; the bake waits for it to rest)
+      clearTimeout(bakeTimer);
+      if (res.positions !== positions) {
+        bakeTimer = setTimeout(() => {
+          const baked = bakeHairShade({ positions: res.positions, n, p, width: shadowWidth });
+          for (let i = 0; i < n * p; i++) pos.data[i * 4 + 3] = baked[i];
+          pos.tex.needsUpdate = true;
+        }, 200);
+      }
       for (let i = 0; i < n * p; i++) {
         pos.data[i * 4] = res.positions[i * 3];
         pos.data[i * 4 + 1] = res.positions[i * 3 + 1];
@@ -422,14 +441,17 @@ export async function buildGroom(
       updateHairShadow(group, { positions: res.positions, n, p, width: shadowWidth });
       return !!scalp || isPlainShape(shape); // false: shown as filed until the skin is there (lib/hair.ts tries again)
     };
-    group.userData.setLook = (look: { frizz: number; shine: number }) => {
-      material.uniforms.uFrizz.value = look.frizz;
-      material.uniforms.uShine.value = look.shine;
-    };
   }
+  group.userData.setLook = (patch: Partial<typeof look>) => {
+    Object.assign(look, patch);
+    material.uniforms.uFrizz.value = look.frizz;
+    material.uniforms.uShine.value = look.shine;
+    material.uniforms.uLashLen.value = look.length;
+    material.uniforms.uLashCurl.value = look.curl;
+    applyTier();
+  };
   group.userData.dispose = () => {
     unshadow();
-    releaseHairShadowTier(material);
     lid.tex.dispose();
     shapePts.tex.dispose();
     offTier();

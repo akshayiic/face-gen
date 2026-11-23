@@ -28,6 +28,7 @@ import {
   Vector3,
 } from "three";
 
+import { installFabric, setFabric } from "@/lib/fabric";
 import { installHairShadow } from "@/lib/hairShadow";
 import { revealedSnapshot, subscribeRevealed } from "@/lib/headLoad";
 import { morphs } from "@/lib/morphs/store";
@@ -171,9 +172,12 @@ const rig = {
   inner: new MeshPhysicalMaterial({ name: "clothes_inner", side: DoubleSide, vertexColors: true }),
   bust: null as Uint32Array | null, // the skin's vertices round the neck and bust
 };
-// Long hair and beards shade the clothes (lib/hairShadow.ts); the key light's shadow map does the rest (rebuild).
-installHairShadow(rig.outer, "clothes-hair-shadow-v1");
-installHairShadow(rig.inner, "clothes-hair-shadow-v1");
+// The cloth's own surface: knit stitches, weave, twill, grain (lib/fabric.ts) …
+installFabric(rig.outer);
+installFabric(rig.inner);
+// … and long hair and beards shade the clothes (lib/hairShadow.ts); the key light's shadow map does the rest (rebuild).
+installHairShadow(rig.outer, "clothes-hair-shadow-v2");
+installHairShadow(rig.inner, "clothes-hair-shadow-v2");
 
 /** Head.tsx: the head's root node exists. Puts the clothes on and keeps them fitted. Returns the teardown. */
 export function mountClothes(root: Object3D): () => void {
@@ -215,6 +219,7 @@ export function mountClothes(root: Object3D): () => void {
 
 function applyMaterials(): void {
   const fabric = FABRICS.find((f) => f.id === clothesState.fabric) ?? FABRICS[0];
+  setFabric(fabric.id);
   for (const [m, hex] of [[rig.outer, clothesState.colour], [rig.inner, clothesState.inner]] as const) {
     m.color.set(hex);
     m.roughness = fabric.roughness;

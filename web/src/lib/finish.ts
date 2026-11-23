@@ -125,6 +125,7 @@ uniform vec2 uTexel;
 uniform float uNear, uFar, uFocus, uCocScale, uMaxCoc;
 uniform int uTaps;
 uniform float uBloom, uGrain, uVignette, uGrade, uAspect, uFrame, uClarity, uSharpen;
+uniform float uBackdropShade; // 1: a studio backdrop (lit behind the head, darker towards the corners), 0: the page
 varying vec2 vUv;
 
 // circle of confusion (px) at uv: a thin lens focused at uFocus; the backdrop counts as far away
@@ -202,7 +203,9 @@ void main() {
 
   // vignette (head and clothes only: the backdrop keeps the page's colour)
   vec2 q = (vUv - 0.5) * vec2(uAspect, 1.0);
-  c *= mix(1.0, 1.0 - uVignette * smoothstep(0.3, 0.95, length(q)), subject);
+  c *= mix(1.0, 1.0 - uVignette * smoothstep(0.3, 0.95, length(q)), max(subject, uBackdropShade));
+  // a studio backdrop: a soft pool of light behind the head, as a backdrop lit by its own lamp
+  c *= mix(1.0, 0.93 + 0.14 * (1.0 - smoothstep(0.0, 0.85, length(q - vec2(0.0, 0.05)))), (1.0 - subject) * uBackdropShade);
 
   // grain: luminance noise, a new pattern every frame, strongest in the mid-tones
   float lum = dot(c, vec3(0.299, 0.587, 0.114));
@@ -294,6 +297,7 @@ function makeRig(w: number, h: number): Rig {
       tBlur: { value: blur.texture },
       uClarity: { value: 0 },
       uSharpen: { value: 0 },
+      uBackdropShade: { value: 0 },
       uTexel: { value: new Vector2() },
       uNear: { value: 0.1 },
       uFar: { value: 5 },
@@ -380,8 +384,11 @@ export function renderView(gl: WebGLRenderer, scene: Scene, camera: Camera): voi
     su.uNear.value = cam.near;
     su.uFar.value = cam.far;
     su.uPxPerMm1m.value = h / (2 * Math.tan((cam.fov * Math.PI) / 360)) / 1000;
-    su.uStrength.value = Math.min(1, 0.4 + sss);
-    su.uSigma.value.set(...FINISH.sssMm).multiplyScalar(0.35 + 0.65 * sss);
+    // the fine skin texture's relief is shading too, and this blur would wipe it out (its cells are ~0.45 mm, the red
+    // blur ~1 mm): the more of it there is, the narrower and weaker the blur (the shift of the light, not of the pores)
+    const micro = Math.min(1.5, Math.max(0, skinUniforms.uMicro.value));
+    su.uStrength.value = Math.min(1, 0.4 + sss) * (1 - 0.35 * Math.min(1, micro));
+    su.uSigma.value.set(...FINISH.sssMm).multiplyScalar((0.35 + 0.65 * sss) / (1 + 0.9 * micro));
     su.tColor.value = rig.scene.texture;
     su.uDir.value.set(1 / w, 0);
     pass(rig.sssMat, rig.sssA);
@@ -403,6 +410,7 @@ export function renderView(gl: WebGLRenderer, scene: Scene, camera: Camera): voi
   const u = rig.finalMat.uniforms;
   u.tColor.value = src;
   u.uClarity.value = FINISH.clarity * s.clarity;
+  u.uBackdropShade.value = s.backdrop === "page" ? 0 : 1;
   u.uSharpen.value = FINISH.sharpen * s.clarity;
   u.uTexel.value.set(1 / w, 1 / h);
   u.uAspect.value = w / h;

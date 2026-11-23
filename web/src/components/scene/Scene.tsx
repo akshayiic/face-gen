@@ -11,6 +11,7 @@ import { Suspense, useEffect, useLayoutEffect, useRef, useState, useSyncExternal
 import { ACESFilmicToneMapping, type Object3D, type PerspectiveCamera } from "three";
 
 import { clothesSnapshot, onClothesChange } from "@/lib/clothes";
+import { BACKDROPS, FINISH_SERVER_SNAPSHOT, finishSnapshot, onFinishChange } from "@/lib/finishSettings";
 import { registerView } from "@/lib/debugView";
 import { revealedSnapshot, subscribeRevealed } from "@/lib/headLoad";
 import { dropTier, probeTier } from "@/lib/quality";
@@ -53,6 +54,12 @@ const CONTEXT_RESTORE_WAIT_MS = 3000;
  * view. enableRotate, not enabled: drei only updates enabled controls, and that update is what aims the camera at the
  * target (disabled controls keep R3F's default aim at the origin, and the face sits high in the frame).
  */
+/** What's behind the head (Style tab → Camera → Backdrop): the page's colour, or a studio grey, dark or white. */
+function Backdrop() {
+  const backdrop = useSyncExternalStore(onFinishChange, () => finishSnapshot().backdrop, () => FINISH_SERVER_SNAPSHOT.backdrop);
+  return <color attach="background" args={[BACKDROPS[backdrop]]} />;
+}
+
 function Controls() {
   const { width, height } = useThree((s) => s.size);
   const camera = useThree((s) => s.camera);
@@ -140,7 +147,7 @@ export default function Scene() {
         setTextureRenderer(gl); // KTX2 transcoding picks a format this GPU supports (lib/textures.ts)
       }}
     >
-      <color attach="background" args={["#f5f3f1"]} /> {/* matches --surface in app/tokens.css */}
+      <Backdrop /> {/* "page" matches --surface in app/tokens.css */}
       <PerformanceMonitor onIncline={() => adjust(maxDpr())} onDecline={() => dropTier() || adjust(1)} />
       <Lighting />
       <Suspense fallback={null}>

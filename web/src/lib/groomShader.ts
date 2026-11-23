@@ -3,10 +3,9 @@
  * faded by how much of that pixel the strand really covers, child strands placed round their parent, the roots moved
  * with the skin and lashes turned with the lid, and frizz: strands wandering off their line towards the tips and a few
  * flying away from the head (uFrizz, head hair). Fragment: Kajiya-Kay hair lighting from the scene's directional lights,
- * the baked self-shadow and the root → tip colour ramp; on the tiers with the hair's shadow volume (lib/hairShadow.ts)
- * the light reaching each strand through the hair in front of it and the sky the hair round it hides (so tied-back or
- * fuller hair shades right); light shining through backlit strands (uTT); glints along the secondary highlight; and a
- * shine control (uShine).
+ * the self-shadow baked per point (re-baked when the style is re-shaped: lib/hairShadow.ts bakeHairShade) and the
+ * root → tip colour ramp; light shining through backlit strands (uTT); glints along the secondary highlight; and a shine
+ * control (uShine).
  */
 
 export const VERTEX = /* glsl */ `
@@ -42,13 +41,22 @@ varying vec3 vTan;
 varying vec3 vViewPos;
 uniform float uRampLen;
 uniform float uFrizz;
-varying vec3 vHead; // head space, mm (the hair's shadow volume)
+uniform float uLashLen, uLashCurl; // lashes: × their length, and how far the tips curl (up on the upper lid, down below)
 
 vec4 fetchP(int s, int k) {
   int i = s * uPoints + k;
   return texelFetch(uPos, ivec2(i % uTexW, i / uTexW), 0);
 }
 float hash(float n) { return fract(sin(n) * 43758.5453123); }
+// a lash point (index k) longer or shorter from its root, and curled: the tip goes up and forward (down and forward below)
+// (the lower lashes follow far less: a long, curled lower lash reads as a smudge on the cheek)
+vec3 lashFix(vec3 p, int k, vec3 r0, float up) {
+  float t = float(k) / float(uPoints - 1);
+  float w = up > 0.0 ? 1.0 : 0.3;
+  float len = mix(1.0, uLashLen, w);
+  p = r0 + (p - r0) * len;
+  return p + vec3(0.0, up * 0.8, 0.6) * (uLashCurl * w * 0.0045 * t * t * len);
+}
 
 void main() {
   int s = gl_InstanceID % uStrands;
@@ -65,6 +73,13 @@ void main() {
     P.xyz += texelFetch(uShapePts, ivec2(i0 % uTexW, i0 / uTexW), 0).xyz;
     a += texelFetch(uShapePts, ivec2(ia % uTexW, ia / uTexW), 0).xyz;
     b += texelFetch(uShapePts, ivec2(ib % uTexW, ib / uTexW), 0).xyz;
+  }
+  if (uLashLen != 1.0 || uLashCurl != 0.0) {
+    vec3 r0l = fetchP(s, 0).xyz;
+    float upSide = r0l.y > (r0l.x > 0.0 ? uEyeL0.y : uEyeR0.y) ? 1.0 : -1.0; // upper or lower lid
+    P.xyz = lashFix(P.xyz, k, r0l, upSide);
+    a = lashFix(a, max(k - 1, 0), r0l, upSide);
+    b = lashFix(b, min(k + 1, uPoints - 1), r0l, upSide);
   }
   if (uEyeFollow > 0.5) {
     // A closing lid slides round the eyeball: turn the lash about the eye's horizontal axis by the angle its root
@@ -115,7 +130,6 @@ void main() {
     // a few flyaways (they read as dark pen lines against the backdrop when there are many)
     if (hash(id + 19.0) < 0.03 * uFrizz) pos += out2 * uFrizz * 0.018 * fl * fl * (0.4 + hash(id + 23.0));
   }
-  vHead = pos * 1000.0;
   vec4 mv = modelViewMatrix * vec4(pos, 1.0);
   vec3 tv = normalize((modelViewMatrix * vec4(T, 0.0)).xyz);
   vec3 side = normalize(cross(tv, normalize(-mv.xyz)));
@@ -145,9 +159,7 @@ uniform vec3 uSky;
 uniform vec3 uGround;
 uniform vec3 uUpView;
 uniform float uDiffuse, uSpec1, uSpec2, uShift1, uShift2, uExp1, uExp2, uJitter, uShadowFloor, uTipFade, uTipSpec, uRampAmount;
-uniform float uShine, uTT, uGlint;
-uniform vec3 uCentre;
-varying vec3 vHead;
+uniform float uShine, uTT, uGlint, uSheenTint;
 varying float vT;
 varying float vRamp;
 varying float vLong;
@@ -173,31 +185,22 @@ void main() {
   vec3 V = normalize(-vViewPos);
   vec3 N = normalize(V - T * dot(V, T));
   float shade = mix(uShadowFloor, 1.0, vShade);
-  float occ = 1.0;
-  #ifdef USE_HAIR_SHADOW
-  // the volume does the shadowing: the baked shade counts half (they'd darken twice), plus the sky the hair hides
-  shade = mix(uShadowFloor, 1.0, mix(vShade, 1.0, 0.5));
-  vec3 outward = normalize(vHead - uCentre * 1000.0);
-  occ = hairAmbient(vHead + outward * 2.0, outward);
-  #endif
-  vec3 colour = albedo * mix(uGround, uSky, 0.5 + 0.5 * dot(N, uUpView)) * shade * occ;
+  vec3 colour = albedo * mix(uGround, uSky, 0.5 + 0.5 * dot(N, uUpView)) * shade;
   // glints: the secondary highlight sparkles along the strand (its scales catch the light unevenly)
   float glint = mix(1.0, 0.35 + 1.3 * fract(sin(floor(vT * 36.0 + vRand * 91.0) * 12.9898) * 43758.5453), uGlint);
+  // dark hair's highlights are blue-white (a black mirror shows the sky), light hair's follow its own colour
+  vec3 sheenC = mix(vec3(1.0), vec3(0.7, 0.84, 1.18), clamp(1.0 - 3.0 * dot(albedo, vec3(0.2126, 0.7152, 0.0722)), 0.0, 1.0) * uSheenTint);
   #if NUM_DIR_LIGHTS > 0
   for (int i = 0; i < NUM_DIR_LIGHTS; i++) {
     vec3 L = directionalLights[i].direction;
     vec3 Lc = directionalLights[i].color;
-    #ifdef USE_HAIR_SHADOW
-    vec3 Lh = normalize(uViewToHead * L);
-    Lc *= hairTransmit(vHead + Lh * 3.0, Lh); // the hair in front of this strand, towards the light
-    #endif
     float tl = dot(T, L);
     float diff = sqrt(max(0.0, 1.0 - tl * tl)) * (0.35 + 0.65 * clamp(dot(N, L) * 0.5 + 0.5, 0.0, 1.0));
     vec3 H = normalize(L + V);
     float s1 = kk(normalize(T + N * (uShift1 + (vRand - 0.5) * 0.08)), H, uExp1);
     float s2 = kk(normalize(T + N * uShift2), H, uExp2);
     float facing = smoothstep(-0.3, 0.4, dot(N, L));
-    colour += Lc * shade * (albedo * diff * uDiffuse + facing * uShine * (uSpec1 * mix(1.0, uTipSpec, vRamp) * s1 + uSpec2 * s2 * glint * albedo));
+    colour += Lc * shade * (albedo * diff * uDiffuse + facing * uShine * (uSpec1 * mix(1.0, uTipSpec, vRamp) * sheenC * s1 + uSpec2 * s2 * glint * albedo));
     // light through the strand from behind (the rims): a warm glow on the edges of the hair
     float back = pow(clamp(dot(-L, V), 0.0, 1.0), 4.0);
     colour += Lc * albedo * back * uTT * (0.6 + 0.4 * vRand) * sqrt(albedo + 0.02);

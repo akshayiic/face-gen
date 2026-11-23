@@ -10,7 +10,9 @@ import { ClothesControl } from "@/components/ui/ClothesControl";
 import { EyeControl } from "@/components/ui/EyeControl";
 import { FinishControl } from "@/components/ui/FinishControl";
 import { HairControl } from "@/components/ui/HairControl";
+import { EyeMakeupControl } from "@/components/ui/EyeMakeupControl";
 import { LipMakeupControl } from "@/components/ui/LipMakeupControl";
+import { RealisticSkinControl } from "@/components/ui/RealisticSkinControl";
 import { SkinControl } from "@/components/ui/SkinControl";
 import { MarksControl } from "@/components/ui/MarksControl";
 import { ScanMapsControl } from "@/components/ui/ScanMapsControl";
@@ -25,8 +27,10 @@ export function StyleSection() {
       <Hint>Colours, hair and glasses. The voice sees them too.</Hint>
       <Block title="Colouring">
         <SkinControl />
+        <RealisticSkinControl />
         <SkinDetailsControl />
         <LipMakeupControl />
+        <EyeMakeupControl />
         <SkinTextureControl />
         <ScanMapsControl />
         <EyeControl />

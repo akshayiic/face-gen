@@ -149,6 +149,8 @@ export function HairControl() {
           </div>
           <RangeRow label="Volume" value={state.volume} min={-1} max={1} step={0.05} reset={0} low="flat" high="full" mid format={(v) => `${v > 0 ? "+" : ""}${Math.round(v * 100)}%`} onChange={(volume) => setHairWear({ volume })} />
           <RangeRow label="Flyaways" value={state.frizz} min={0} max={1} step={0.05} reset={HAIR_WEAR_DEFAULTS.frizz} low="sleek" high="frizzy" format={pct} onChange={(frizz) => setHairWear({ frizz })} />
+          <RangeRow label="Density" value={state.density} min={0} max={2} step={0.05} reset={HAIR_WEAR_DEFAULTS.density} low="thin, see-through" high="very dense" mid format={(v) => `×${v.toFixed(2)}`} onChange={(density) => setHairWear({ density })} />
+          <RangeRow label="Strand thickness" value={state.thickness} min={0.5} max={1.8} step={0.05} reset={HAIR_WEAR_DEFAULTS.thickness} low="fine, silky" high="coarse" mid format={(v) => `×${v.toFixed(2)}`} onChange={(thickness) => setHairWear({ thickness })} />
           <RangeRow label="Shine" value={state.shine} min={0} max={2} step={0.05} reset={HAIR_WEAR_DEFAULTS.shine} low="matte" high="glossy" mid format={(v) => `×${v.toFixed(2)}`} onChange={(shine) => setHairWear({ shine })} />
         </div>
       )}

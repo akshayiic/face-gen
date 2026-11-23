@@ -48,6 +48,7 @@ import {
   type StrandColours,
   type StrandRamp,
 } from "@/lib/hair";
+import { lashLook } from "@/lib/lashLook";
 import { morphs } from "@/lib/morphs/store";
 import { installMorph } from "@/lib/morphShader";
 
@@ -209,6 +210,15 @@ function applyAddons(seconds = 0, only?: AddonCategory): void {
     else tintStrands(colours, ...args);
   }
 }
+
+/** The lashes' length, curl and fullness (lib/lashLook.ts: Style tab → Colouring → Lashes) onto the lash strands attached. */
+function applyLashLook(): void {
+  const node = addonRig.meshes.eyelashes;
+  (node?.userData.setLook as ((l: { length: number; curl: number; density: number }) => void) | undefined)?.({
+    length: lashLook.length, curl: lashLook.curl, density: lashLook.density,
+  });
+}
+lashLook.apply = applyLashLook;
 
 const hex = (n: number) => "#" + n.toString(16).padStart(6, "0");
 
@@ -450,6 +460,7 @@ function attach(category: AddonCategory, node: Object3D, parent: Object3D, cross
   addonRig.meshes[category] = node;
   for (const m of meshesOf(node)) if (!m.userData.groom) morphs.bind(m); // strand pieces follow the skin themselves
   applyAddons(0, category);
+  if (category === "eyelashes") applyLashLook();
   if (category !== "glasses") return;
   const { fitted, unfit } = fitGlasses(node, parent); // on this face, not only the baked one
   node.userData.unfit = unfit;
