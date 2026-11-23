@@ -205,6 +205,15 @@ export const skinUniforms = {
   uMicro: { value: 0 },
   uMicroTile: { value: 7.2 }, // mm one tile covers
   uLipLines: { value: 0 },
+  // face form (lib/skinDetails.ts): philtrum, cupid's bow, mouth line, shadow under the lower lip, collarbone, jaw shadow, ears
+  uPhiltrum: { value: 0 },
+  uCupid: { value: 0 },
+  uMouthLine: { value: 0 },
+  uUnderLip: { value: 1 },
+  uCollarbone: { value: 0 },
+  uJawShade: { value: 1 },
+  uEarDetail: { value: 0 },
+  uFormOn: { value: 0 },
   uBlushTint: { value: new Vector3(1.0, 0.68, 0.7) }, // what the blush multiplies the skin by
   uBlushSpread: { value: 0 },
   uLiner: { value: 0 },
@@ -284,12 +293,15 @@ uniform float uSkinNormalAmt, uSkinRoughAmt, uSkinCavityAmt;
 uniform float uSkinAlpha;
 uniform sampler2D uSkinMicro;
 uniform float uMicro, uMicroTile, uLipLines, uBlushSpread, uLiner, uLinerWing, uShadow;
+uniform float uPhiltrum, uCupid, uMouthLine, uUnderLip, uCollarbone, uJawShade, uEarDetail, uFormOn;
 uniform vec3 uBlushTint, uLinerColour, uShadowColour;
 // the fine skin texture, read once in the colour step and bumped in the normal step: each projection plane's slope,
 // the blend between planes, how much it counts here, the pore mask and the roughness variation
 vec2 skinMG0 = vec2(0.0), skinMG1 = vec2(0.0), skinMG2 = vec2(0.0);
 vec3 skinMW = vec3(0.0);
 float skinMicroAmt = 0.0, skinMicroPore = 0.0, skinMicroRough = 0.5;
+float formH = 0.0; // the face form's height (mm: philtrum, mouth line, collarbone), set in the colour step
+float formLift = 1.0; // x the diffuse light (lifts the shadow under the lower lip)
 float lipLineH = 0.0; // the lip lines' height (−1 in a groove … 0), × lipLines in the normal step
 float markH = 0.0; // the marks' and sweat's height (mm), set in the colour step, bumped in the normal step
 float markRough = 1.0; // × roughness (scars shine, scabs are matte)
@@ -406,6 +418,49 @@ const REGIONS = /* glsl */ `
     float lpx = max(length(fwidth(vRest)), 1e-4); // mm per pixel here
     lipLineH = -groove * skinLip * lipZone * (1.0 - smoothstep(0.06, 0.2, lpx));
     diffuseColor.rgb *= 1.0 - 0.18 * uLipLines * (-lipLineH);
+  }
+  if (uFormOn > 0.5) {
+    // face form, in rest-skin mm (head space): the places a smooth scan leaves blank. Heights go to the normal step
+    float fx = abs(vRest.x);
+    float fz = smoothstep(100.0, 118.0, vRest.z);
+    // philtrum: the groove from the nose to the lip, two raised columns either side of it
+    float pw = smoothstep(238.0, 242.0, vRest.y) * (1.0 - smoothstep(255.0, 259.0, vRest.y)) * fz;
+    float pg = exp(-pow(fx / 2.1, 2.0)), pc = exp(-pow((fx - 4.6) / 1.5, 2.0));
+    formH += uPhiltrum * pw * (0.45 * pc - 0.4 * pg);
+    diffuseColor.rgb *= 1.0 - 0.07 * uPhiltrum * pw * pg;
+    // cupid's bow: the upper lip's top edge dips at the middle between two peaks, a small tubercle under the dip
+    float bowY = 240.3 - 1.4 * exp(-pow(fx / 2.4, 2.0)) + 1.1 * exp(-pow((fx - 3.9) / 1.7, 2.0)) - 0.0035 * fx * fx;
+    float bowLine = exp(-pow((vRest.y - bowY) / 0.65, 2.0)) * (1.0 - smoothstep(14.0, 20.0, fx)) * fz;
+    diffuseColor.rgb *= 1.0 - 0.13 * uCupid * bowLine;
+    formH += uCupid * 0.3 * exp(-pow(fx / 2.6, 2.0)) * exp(-pow((vRest.y - 236.0) / 2.4, 2.0)) * fz;
+    // the mouth line: where the lips meet, a dark line, deepest at the middle and fading before the corners
+    float mouthY = 232.3 + 0.006 * fx * fx;
+    float mouthLine = exp(-pow((vRest.y - mouthY) / 0.55, 2.0)) * (1.0 - smoothstep(20.0, 29.0, fx)) * fz;
+    formH -= uMouthLine * 0.3 * mouthLine;
+    diffuseColor.rgb *= 1.0 - 0.3 * uMouthLine * mouthLine;
+    // under the lower lip: the baked occlusion and the key's shadow there are lifted (1 = as scanned)
+    float underZone = exp(-pow((vRest.y - 219.0) / 6.5, 2.0)) * (1.0 - smoothstep(10.0, 24.0, fx)) * fz;
+    formLift = 1.0 + 0.55 * (1.0 - uUnderLip) * underZone;
+    // collarbone: a ridge on each side of the base of the neck, the hollow above it, the notch between them
+    float cy = 122.0 + 0.045 * (fx - 14.0);
+    float cm = smoothstep(10.0, 16.0, fx) * (1.0 - smoothstep(76.0, 90.0, fx)) * smoothstep(20.0, 36.0, vRest.z) * (1.0 - smoothstep(142.0, 150.0, vRest.y)) * smoothstep(92.0, 102.0, vRest.y);
+    float cdy = vRest.y - cy;
+    float cRidge = exp(-pow(cdy / 4.0, 2.0)), cFossa = exp(-pow((cdy - 10.0) / 5.5, 2.0));
+    float cNotch = exp(-(pow(vRest.x / 6.0, 2.0) + pow((vRest.y - 124.0) / 6.0, 2.0))) * smoothstep(20.0, 36.0, vRest.z);
+    float cBelow = exp(-pow((cdy + 7.0) / 4.5, 2.0));
+    formH += uCollarbone * (cm * (3.6 * cRidge - 2.4 * cFossa - 0.8 * cBelow) - 2.5 * cNotch);
+    diffuseColor.rgb *= 1.0 - uCollarbone * (0.16 * cm * cFossa + 0.07 * cm * cBelow + 0.1 * cNotch);
+    // the shadow under the jaw: skin under the chin and behind the jaw's angle darkens, most just under the edge
+    float jawY = 199.0 + 0.36 * max(0.0, fx - 20.0);
+    float jawDown = smoothstep(0.3, -0.4, normalize(vSkinN).y); // surfaces facing down: the chin's underside
+    float jawNeck = smoothstep(jawY - 70.0, jawY - 4.0, vRest.y); // the neck, darker the nearer the jaw
+    float jawShade = (1.0 - smoothstep(jawY - 6.0, jawY + 6.0, vRest.y)) * max(jawDown, 0.6 * jawNeck) * (1.0 - smoothstep(60.0, 80.0, fx)) * smoothstep(140.0, 165.0, vRest.y);
+    diffuseColor.rgb *= 1.0 - 0.42 * uJawShade * jawShade;
+    // the ears: the creases the baked occlusion finds go darker and redder, the bowl of the ear pinker
+    float earM = smoothstep(66.0, 74.0, fx) * (1.0 - smoothstep(26.0, 36.0, vRest.z)) * smoothstep(236.0, 248.0, vRest.y) * (1.0 - smoothstep(312.0, 322.0, vRest.y));
+    diffuseColor.rgb *= mix(vec3(1.0), vec3(0.6, 0.46, 0.46), clamp((1.0 - skinReg.r) * 1.8 * earM * uEarDetail, 0.0, 0.85));
+    float concha = exp(-(pow((fx - 82.0) / 7.0, 2.0) + pow((vRest.y - 282.0) / 9.0, 2.0) + pow((vRest.z - 8.0) / 10.0, 2.0)));
+    diffuseColor.rgb *= mix(vec3(1.0), vec3(0.9, 0.66, 0.64), clamp(concha * earM * uEarDetail * 0.8, 0.0, 0.8));
   }
   {
     // round the eyes (vRest is in mm): under the eye (towards the inner corner) and the upper lid crease
@@ -722,6 +777,7 @@ if (uMicro > 0.0) {
 }
 #endif
 if (uLipLines > 0.0) normal = ageBump(-vViewPosition, normal, lipLineH * 0.085 * uLipLines, faceDirection); // the furrows, ~0.085 mm deep
+if (uFormOn > 0.5) normal = ageBump(-vViewPosition, normal, formH, faceDirection); // the face form (philtrum, mouth line, collarbone)
 // scars, cuts, burns and sweat droplets (heights from the colour step); a uniform test, so the derivatives stay valid
 if (uMarkCount > 0 || uSweat > 0.0) normal = ageBump(-vViewPosition, normal, markH, faceDirection);
 #ifdef USE_STUBBLE
@@ -807,6 +863,8 @@ const AO_DIRECT = /* glsl */ `
   reflectedLight.directDiffuse *= aoDirect;
   reflectedLight.directSpecular *= aoDirect;
 #endif
+reflectedLight.directDiffuse *= formLift;
+reflectedLight.indirectDiffuse *= formLift;
 reflectedLight.indirectSpecular *= skinCavity;
 ${hairAmbientChunk("skinSmoothN")}
 `;

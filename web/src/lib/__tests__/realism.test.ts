@@ -148,7 +148,7 @@ describe("stored values", () => {
 
   it("checks the new skin details and camera settings", () => {
     const d = sanitizeSkinDetails({ wrinkles: 9, expression: -1, sun: 0.5, oiliness: 5, grime: "x" });
-    expect(d).toMatchObject({ wrinkles: 1.5, expression: 0, sun: 0.5, oiliness: 2, grime: 0, sweat: 0, sunSpots: 0, capillaries: 0 });
+    expect(d).toMatchObject({ wrinkles: 1.5, expression: 0, sun: 0.5, oiliness: 2, grime: 0, sweat: 0, sunSpots: 0, capillaries: 0.1 });
     expect(sanitizeFinish({ light: "disco", clarity: 2, skin: -1 })).toMatchObject({ light: "studio", clarity: 1, skin: 0 });
     expect(sanitizeFinish({ light: "sun" }).light).toBe("sun");
   });

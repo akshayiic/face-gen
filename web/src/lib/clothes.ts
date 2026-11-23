@@ -25,6 +25,9 @@ import {
   Mesh,
   MeshPhysicalMaterial,
   type Object3D,
+  OctahedronGeometry,
+  SphereGeometry,
+  TorusGeometry,
   Vector3,
 } from "three";
 
@@ -36,6 +39,7 @@ import { sculptedVertexPosition } from "@/lib/sculpt";
 import { STORAGE_KEYS } from "@/lib/storageKeys";
 
 export type ClothesStyleId = "none" | "tee" | "vneck" | "scoop" | "turtleneck" | "shirt" | "blazer";
+export type EarringId = "none" | "pearl" | "gold" | "diamond" | "hoop";
 export type FabricId = "cotton" | "knit" | "satin" | "denim" | "leather";
 
 export const CLOTHES_STYLES: { id: ClothesStyleId; label: string; inner?: boolean }[] = [
@@ -46,6 +50,14 @@ export const CLOTHES_STYLES: { id: ClothesStyleId; label: string; inner?: boolea
   { id: "turtleneck", label: "Turtleneck" },
   { id: "shirt", label: "Collared shirt" },
   { id: "blazer", label: "Blazer", inner: true },
+];
+
+export const EARRINGS: { id: EarringId; label: string }[] = [
+  { id: "none", label: "None" },
+  { id: "pearl", label: "Pearl studs" },
+  { id: "gold", label: "Gold studs" },
+  { id: "diamond", label: "Diamond studs" },
+  { id: "hoop", label: "Gold hoops" },
 ];
 
 export const FABRICS: { id: FabricId; label: string; roughness: number; sheen: number; sheenRoughness: number; clearcoat?: number }[] = [
@@ -86,9 +98,11 @@ export interface ClothesState {
   shoulders: number; // −1 narrow … +1 broad
   build: number; // −1 slim … +1 broad chest
   neckline: number; // −1 shallow … +1 deep (V, scoop, the blazer's top)
+  collar: number; // −1 flat … +1 tall: the blazer's collar round the back of the neck (stands up, folds over)
+  earrings: EarringId; // worn with any garment, or none
 }
 
-export const CLOTHES_DEFAULTS: ClothesState = { style: "none", colour: "#1d3f9e", inner: "#f2f0ec", fabric: "cotton", fit: 0, shoulders: 0, build: 0, neckline: 0 };
+export const CLOTHES_DEFAULTS: ClothesState = { style: "none", colour: "#1d3f9e", inner: "#f2f0ec", fabric: "cotton", fit: 0, shoulders: 0, build: 0, neckline: 0, collar: 0.3, earrings: "none" };
 
 /** Tweak freely: sizes in metres (head.glb's space: Y up, the face towards +Z). */
 const CLOTHES = {
@@ -132,6 +146,8 @@ export function sanitizeClothes(raw: unknown): ClothesState {
     shoulders: clampUnit(s.shoulders, 0),
     build: clampUnit(s.build, 0),
     neckline: clampUnit(s.neckline, 0),
+    collar: clampUnit(s.collar, CLOTHES_DEFAULTS.collar),
+    earrings: EARRINGS.some((e) => e.id === s.earrings) ? (s.earrings as EarringId) : CLOTHES_DEFAULTS.earrings,
   };
 }
 
@@ -156,7 +172,7 @@ export function setClothes(patch: Partial<ClothesState>): void {
   } catch {
     /* private mode */
   }
-  const shapeChanged = (["style", "fit", "shoulders", "build", "neckline"] as const).some((k) => before[k] !== clothesState[k]);
+  const shapeChanged = (["style", "fit", "shoulders", "build", "neckline", "collar", "earrings"] as const).some((k) => before[k] !== clothesState[k]);
   if (shapeChanged) rebuild();
   else applyMaterials();
   for (const fn of listeners) fn();
@@ -200,7 +216,7 @@ export function mountClothes(root: Object3D): () => void {
   const offSettle = morphs.onSettle(rebuild);
   let timer: ReturnType<typeof setTimeout> | null = null;
   const offChange = morphs.onChange(() => {
-    if (timer || clothesState.style === "none") return;
+    if (timer || (clothesState.style === "none" && clothesState.earrings === "none")) return;
     timer = setTimeout(() => {
       timer = null;
       rebuild();
@@ -237,7 +253,7 @@ function clearGroup(): void {
   const g = rig.group;
   if (!g) return;
   for (const c of [...g.children]) {
-    (c as Mesh).geometry?.dispose();
+    c.traverse((o) => (o as Mesh).geometry?.dispose());
     g.remove(c);
   }
 }
@@ -246,6 +262,7 @@ function clearGroup(): void {
 export function rebuild(): void {
   if (!rig.group || !rig.skin || !rig.root) return;
   clearGroup();
+  addEarrings(rig.skin, rig.root, rig.group);
   if (clothesState.style === "none") return;
   const probe = makeProbe(rig.skin, rig.root);
   if (!probe) return;
@@ -253,9 +270,79 @@ export function rebuild(): void {
     const mesh = new Mesh(layer.geometry, layer.inner ? rig.inner : rig.outer);
     mesh.name = layer.name;
     mesh.userData.clothes = true;
-    mesh.castShadow = mesh.receiveShadow = true; // the chin on the chest, the collar on the neck (Lighting.tsx: the key's shadow)
+    // the chin on the chest, the collar on the neck (Lighting.tsx: the key's shadow). The sleeves and lapels lie against the
+    // body, so their own shadow-map lookups only show acne: they cast, but are lit evenly.
+    mesh.castShadow = true;
+    mesh.receiveShadow = layer.name !== "clothes_sleeves" && layer.name !== "clothes_lapels";
     mesh.renderOrder = layer.inner ? 0 : 1;
     rig.group.add(mesh);
+  }
+}
+
+// --- earrings -----------------------------------------------------------------------------------------------------
+
+const EAR_MATERIALS = {
+  pearl: new MeshPhysicalMaterial({ name: "earring_pearl", color: "#f4efe8", roughness: 0.16, metalness: 0, clearcoat: 1, clearcoatRoughness: 0.08, sheen: 0.6, sheenColor: new Color("#ffe9f2"), iridescence: 0.35, iridescenceIOR: 1.4 }),
+  gold: new MeshPhysicalMaterial({ name: "earring_gold", color: "#e0b45a", roughness: 0.22, metalness: 1 }),
+  diamond: new MeshPhysicalMaterial({ name: "earring_diamond", color: "#f6fbff", roughness: 0.04, metalness: 0.15, clearcoat: 1, clearcoatRoughness: 0.02, iridescence: 0.5 }),
+};
+/** Where the ear lobe is on the rest face (head space, m): the stud sits on the nearest skin there, outside the ear. */
+const LOBE = { x: 0.0775, y: 0.2495, z: 0.025, reach: 0.02 };
+
+/** A pair of earrings on the lobes of the face as it is now (the skin's current shape, sculpt included). */
+function addEarrings(skin: Mesh, root: Object3D, group: Group): void {
+  const style = clothesState.earrings;
+  if (style === "none") return;
+  root.updateWorldMatrix(true, false);
+  skin.updateWorldMatrix(true, false);
+  const toRoot = new Matrix4().copy(root.matrixWorld).invert().multiply(skin.matrixWorld);
+  const pos = skin.geometry.attributes.position;
+  const v = new Vector3();
+  for (const side of [-1, 1]) {
+    // the skin vertex nearest the lobe's place (a wide search in x: ear and head size move it)
+    let best = -1, bestD = Infinity;
+    const target = new Vector3(side * LOBE.x, LOBE.y, LOBE.z);
+    for (let i = 0; i < pos.count; i++) {
+      sculptedVertexPosition(skin, i, v).applyMatrix4(toRoot);
+      if (v.x * side < 0.05) continue;
+      const d = v.distanceToSquared(target);
+      if (d < bestD) {
+        bestD = d;
+        best = i;
+      }
+    }
+    if (best < 0 || bestD > LOBE.reach * LOBE.reach * 4) continue;
+    const p = sculptedVertexPosition(skin, best, new Vector3()).applyMatrix4(toRoot);
+    // the lobe's outer face: the skin's own normal there, level (a stud's post goes through the lobe's thickness)
+    const nrm = skin.geometry.attributes.normal;
+    const out = nrm ? new Vector3().fromBufferAttribute(nrm, best).transformDirection(toRoot) : new Vector3(side, 0, 0.7);
+    out.y = 0;
+    if (out.x * side < 0.3) out.x = side * 0.3; // never pointing back into the head
+    out.normalize();
+    const piece = new Group();
+    piece.name = "earring";
+    if (style === "hoop") {
+      const ring = new Mesh(new TorusGeometry(0.0095, 0.00085, 12, 40), EAR_MATERIALS.gold);
+      // the ring passes through the lobe along its normal: its top is in the lobe's thickness, its plane holds that normal
+      ring.position.set(0, -0.0095 + 0.0012, 0);
+      ring.rotation.y = Math.atan2(-out.z, out.x);
+      piece.add(ring);
+      piece.position.copy(p).addScaledVector(out, -0.0022);
+    } else {
+      const geom = style === "diamond" ? new OctahedronGeometry(0.0034, 1) : new SphereGeometry(style === "pearl" ? 0.0034 : 0.0027, 28, 20);
+      const stud = new Mesh(geom, EAR_MATERIALS[style]);
+      piece.add(stud);
+      piece.position.copy(p).addScaledVector(out, 0.0026);
+    }
+    piece.traverse((o) => {
+      if ((o as Mesh).isMesh) {
+        o.userData.clothes = true; // the .glb export carries them with the garment (lib/export/model.ts)
+        o.name = "earring_" + style + (side < 0 ? "_r" : "_l");
+        o.castShadow = true;
+        o.renderOrder = 2;
+      }
+    });
+    group.add(piece);
   }
 }
 
@@ -382,6 +469,8 @@ interface Cut {
   band: number; // m down from the top edge that rolls outward (rib, collar, lapel)
   roll: number; // m it rolls out at the edge
   bandWhere?: (theta: number) => number; // 0..1: how much of the band applies in a direction (default everywhere)
+  collar?: { band: number; roll: number }; // the part of the edge that is not lapel (the back of the neck) rolls out like a collar
+  torsoWidth?: number; // m added to the torso's half-width (negative: a narrower body, for a jacket whose sleeves hang outside it)
 }
 
 const smooth = (x: number) => {
@@ -417,9 +506,15 @@ function layersFor(s: ClothesState, probe: Probe): Layer[] {
       return [garment("clothes_shirt", probe, s, { top, thickness: thick, torsoGrow: grow, band: 0.028, roll: 0.0035 }, false)];
     }
     case "blazer": {
-      const inner = garment("clothes_inner", probe, s, { top: vee(0.02 + 0.03 * deep, 0.7), thickness: thick, torsoGrow: grow, band: 0.005, roll: 0.001 }, true);
+      // the body is narrower than a plain top's: the sleeves hang outside it, from the shoulder's point
+      const sleeveR = 0.05;
+      const outer = CLOTHES.shoulders.width + CLOTHES.shoulders.perUnit * s.shoulders + grow + 0.01 + thick + 0.007; // the full width a plain top would have
+      const narrow = -(sleeveR + 0.015);
+      const inner = garment("clothes_inner", probe, s, { top: vee(0.02 + 0.03 * deep, 0.7), thickness: thick, torsoGrow: grow, torsoWidth: narrow, band: 0.005, roll: 0.001 }, true);
       // the jacket: a collar up the back of the neck, open in front in a deep V down to the button
-      const collar = (t: number) => yf + 0.006 + 0.026 * ((1 - Math.cos(t)) / 2);
+      // (the collar option raises it at the back of the neck and folds it outward over the jacket)
+      const stand = 0.016 * s.collar;
+      const collar = (t: number) => yf + 0.006 + 0.026 * ((1 - Math.cos(t)) / 2) + stand * smooth((Math.abs(t) - 0.95) / 0.7);
       const open = 0.95; // radians either side of the front where the opening reaches the collar
       const button = yf - 0.15 - 0.05 * deep;
       const top = (t: number) => {
@@ -429,8 +524,9 @@ function layersFor(s: ClothesState, probe: Probe): Layer[] {
         return button + (collar(open) - button) * k ** 0.9;
       };
       const lapel = (t: number) => 1 - smooth((Math.abs(t) - open) / 0.35);
-      const jacket = garment("clothes_jacket", probe, s, { top, thickness: thick + 0.007, torsoGrow: grow + 0.01, band: 0.05, roll: 0.005, bandWhere: lapel }, false);
-      return [inner, jacket];
+      const cut: Cut = { top, thickness: thick + 0.007, torsoGrow: grow + 0.01, torsoWidth: narrow, band: 0.012, roll: 0.003, bandWhere: lapel, collar: { band: 0.03 + 0.012 * s.collar, roll: 0.0065 + 0.005 * s.collar } };
+      const jacket = garment("clothes_jacket", probe, s, cut, false);
+      return [inner, jacket, sleevesFor(probe, s, cut, outer - sleeveR, sleeveR), lapelsFor(probe, s, cut, { button, join: collar(open), open })];
     }
     default:
       return [];
@@ -438,9 +534,9 @@ function layersFor(s: ClothesState, probe: Probe): Layer[] {
 }
 
 /** The torso's half-extent along direction θ from the neck's axis: a rounded box (superellipse) round the chest. */
-function torsoRadius(theta: number, s: ClothesState, grow: number): number {
+function torsoRadius(theta: number, s: ClothesState, grow: number, narrow = 0): number {
   const C = CLOTHES.shoulders;
-  const W = C.width + C.perUnit * s.shoulders + grow;
+  const W = C.width + C.perUnit * s.shoulders + grow + narrow;
   const D = C.depth + C.depthPerUnit * s.build + grow;
   const dx = Math.sin(theta), dz = Math.cos(theta);
   // bisection for t: |t·dx / W|^p + |(t·dz − z0) / D|^p = 1
@@ -514,8 +610,10 @@ function garment(name: string, probe: Probe, s: ClothesState, cut: Cut, inner: b
       let rr = R[i * M + j];
       const yy = Y[i * M + j];
       const inBand = cut.band > 0 ? Math.max(0, 1 - d / cut.band) : 0;
+      // a rolled rim peaks at the edge and eases away
       rr += cut.roll * where * Math.sqrt(inBand);
-      // a soft shadow where a lapel or collar folds over (at the band's lower edge)
+      if (cut.collar) rr += cut.collar.roll * (1 - where) * Math.sqrt(Math.max(0, 1 - d / cut.collar.band));
+      // a soft shadow where a collar folds over (at the band's lower edge)
       const crease = where * Math.exp(-(((d - cut.band) / 0.006) ** 2)) * 0.35;
       const edge = Math.exp(-((d / 0.004) ** 2)) * 0.12; // the edge itself catches a little less light
       const shade = 1 - Math.min(0.5, crease + edge);
@@ -545,6 +643,176 @@ function garment(name: string, probe: Probe, s: ClothesState, cut: Cut, inner: b
   return { name, geometry, inner };
 }
 
+/** Where a column's outline is at height y (linear between its points; above its top, its top's). */
+function outlineAt(pts: [number, number][], y: number): number {
+  if (y >= pts[0][1]) return pts[0][0];
+  let lo = 0, hi = pts.length - 1;
+  if (y <= pts[hi][1]) return pts[hi][0];
+  while (hi - lo > 1) {
+    const mid = (lo + hi) >> 1;
+    if (pts[mid][1] >= y) lo = mid;
+    else hi = mid;
+  }
+  const u = (pts[lo][1] - y) / (pts[lo][1] - pts[hi][1] || 1);
+  return pts[lo][0] + (pts[hi][0] - pts[lo][0]) * u;
+}
+
+/**
+ * The sleeves: from each shoulder's point a dome (the sleeve head, squared off a little) and then the arm hanging straight
+ * down, a touch narrower at the bottom. They overlap the body, so where they meet is the armhole's seam (shaded).
+ */
+function sleevesFor(probe: Probe, s: ClothesState, cut: Cut, cx: number, R: number): Layer {
+  const ring = 32, dome = 9, down = 26;
+  const rows = dome + down + 1;
+  const Rz = R * 1.12, cz = CLOTHES.shoulders.centreZ;
+  const power = 3; // 2 = an ellipse, higher = squarer
+  const sgn = (v: number) => (v < 0 ? -1 : 1);
+  const position: number[] = [], colour: number[] = [], uv: number[] = [], index: number[] = [];
+  for (const side of [-1, 1]) {
+    const { pts } = columnProfile((side * Math.PI) / 2, probe, s, cut);
+    const edge = pts[pts.length - 1][0];
+    // the body's shoulder line, just short of where it turns down the side: its height and slope. The sleeve head carries
+    // that line on out to the shoulder's point (a shoulder pad's slope), then rounds off.
+    const at = (r0: number) => pts.find(([r]) => r >= r0) ?? pts[pts.length - 1];
+    const [ra, ya] = at(edge - 0.04), [rb, yb] = at(edge - 0.02);
+    const slope = Math.min(0.7, Math.max(0.15, (ya - yb) / Math.max(rb - ra, 0.005)));
+    const top = yb - slope * (cx - rb) + 0.003, hd = 0.03;
+    const base = position.length / 3;
+    for (let j = 0; j < rows; j++) {
+      let y: number, rho: number;
+      if (j <= dome) {
+        const phi = ((j / dome) * Math.PI) / 2;
+        y = top - hd * (1 - Math.cos(phi));
+        rho = Math.sin(phi);
+      } else {
+        const t = (j - dome) / down;
+        y = top - hd - t * (top - hd - CLOTHES.bottom);
+        rho = 1 - 0.07 * Math.min(1, t * 1.5);
+      }
+      const drift = side * 0.03 * Math.max(0, top - hd - y); // the arm hangs a little outward
+      const tilt = 1 - Math.min(1, Math.max(0, (j - dome) / 6)); // the head's slope fades out down the arm
+      for (let k = 0; k < ring; k++) {
+        const a = (k / ring) * Math.PI * 2;
+        const ca = Math.cos(a), sa = Math.sin(a);
+        const across = R * rho * sgn(ca) * Math.abs(ca) ** (2 / power); // sideways offset from the arm's axis (+X)
+        position.push(
+          side * cx + drift + across,
+          y - slope * side * across * tilt,
+          cz + Rz * rho * sgn(sa) * Math.abs(sa) ** (2 / power),
+        );
+        // the seam where the arm meets the body: the inner side, strongest at the sleeve head
+        const inward = Math.max(0, -side * ca) ** 2;
+        const front = Math.max(0, sa) * 0.5 + 0.5;
+        const shade = 1 - 0.32 * inward * front - 0.1 * Math.exp(-(((j - dome) / 3) ** 2)) * inward;
+        colour.push(shade, shade, shade);
+        uv.push(k / ring, top - y);
+      }
+    }
+    for (let j = 0; j < rows - 1; j++) {
+      for (let k = 0; k < ring; k++) {
+        const k2 = (k + 1) % ring;
+        const a = base + j * ring + k, b = base + j * ring + k2, d = base + (j + 1) * ring + k, e = base + (j + 1) * ring + k2;
+        if (side > 0) index.push(a, b, d, b, e, d);
+        else index.push(a, d, b, b, d, e);
+      }
+    }
+  }
+  const geometry = new BufferGeometry();
+  geometry.setAttribute("position", new Float32BufferAttribute(position, 3));
+  geometry.setAttribute("color", new Float32BufferAttribute(colour, 3));
+  geometry.setAttribute("uv", new Float32BufferAttribute(uv, 2));
+  geometry.setIndex(index);
+  geometry.computeVertexNormals();
+  return { name: "clothes_sleeves", geometry, inner: false };
+}
+
+/**
+ * The lapels: on each side a flat panel lying on the jacket's front, from the button up along the opening, widest at the
+ * notch and ending in a peak, its top edge slanting out from the collar's seam. The edge is rolled (a fold shadow), the
+ * outer edge stitched. Points sit on the jacket by the column outlines, so they follow the body however it is built.
+ */
+function lapelsFor(probe: Probe, s: ClothesState, cut: Cut, g: { button: number; join: number; open: number }): Layer {
+  const cache = new Map<number, [number, number][]>();
+  const radius = (theta: number, y: number): number => {
+    const key = Math.round(theta * 4000);
+    let pts = cache.get(key);
+    if (!pts) cache.set(key, (pts = columnProfile(theta, probe, s, cut).pts));
+    return outlineAt(pts, y);
+  };
+  const X = (theta: number, y: number) => radius(theta, y) * Math.sin(theta);
+  // the opening's edge at a height: the angle where the neckline reaches it
+  const edgeAngle = (y: number) => {
+    let lo = 0, hi = g.open;
+    for (let i = 0; i < 24; i++) {
+      const mid = (lo + hi) / 2;
+      if (cut.top(mid) < y) lo = mid;
+      else hi = mid;
+    }
+    return (lo + hi) / 2;
+  };
+  // the angle at which the jacket's front has reached lateral distance x at height y
+  const angleAtX = (x: number, y: number, from: number) => {
+    let lo = from, hi = Math.PI / 2;
+    for (let i = 0; i < 24; i++) {
+      const mid = (lo + hi) / 2;
+      if (X(mid, y) < x) lo = mid;
+      else hi = mid;
+    }
+    return (lo + hi) / 2;
+  };
+  const W = 0.07; // how wide it is at the notch (lateral, m)
+  const yb = g.button + 0.012;
+  const yn = g.join - 0.004; // the gorge: where the collar's seam meets it
+  const yp = g.join + 0.014; // the peak
+  const rows = 30, cols = 12;
+  const position: number[] = [], colour: number[] = [], uv: number[] = [], index: number[] = [];
+  let base = 0;
+  for (const side of [-1, 1]) {
+    for (let j = 0; j <= rows; j++) {
+      const y = yb + ((yp - yb) * j) / rows;
+      const up = Math.min(1, (y - yb) / (yn - yb)); // 0 at the button … 1 at the gorge
+      const te = edgeAngle(Math.min(y, yn));
+      const xe = X(te, Math.min(y, yn));
+      const width = W * smooth(up) ** 0.85;
+      const outerX = xe + width;
+      // above the gorge the inner side slants out towards the peak (the top edge)
+      const slide = y > yn ? ((y - yn) / (yp - yn)) * W * 0.88 : 0;
+      const innerX = (y > yn ? xe : X(edgeAngle(y), y)) + slide;
+      for (let c = 0; c <= cols; c++) {
+        const a = c / cols;
+        const x = innerX + (outerX - innerX) * a;
+        const th = angleAtX(Math.max(x, 1e-4), y, 0);
+        const r = radius(th, y);
+        // lying proud of the jacket: the rolled inner edge stands a little higher
+        const off = 0.0065 + 0.0035 * (1 - a) ** 2;
+        const R = r + off;
+        position.push(side * Math.sin(th) * R, y, Math.cos(th) * R);
+        const roll = Math.exp(-((a / 0.07) ** 2)) * 0.22; // the fold
+        const rim = Math.exp(-(((1 - a) / 0.025) ** 2)) * 0.14; // the free edge
+        const stitch = Math.exp(-(((a - 0.9) / 0.018) ** 2)) * 0.16; // top-stitching
+        const shade = 1 - Math.min(0.45, roll + rim + stitch);
+        colour.push(shade, shade, shade);
+        uv.push((side * th + Math.PI) / (2 * Math.PI), cut.top(th) - y);
+      }
+    }
+    for (let j = 0; j < rows; j++) {
+      for (let c = 0; c < cols; c++) {
+        const a = base + j * (cols + 1) + c, b = a + 1, d = a + cols + 1, e = d + 1;
+        if (side > 0) index.push(a, d, b, b, d, e);
+        else index.push(a, b, d, b, e, d);
+      }
+    }
+    base += (rows + 1) * (cols + 1);
+  }
+  const geometry = new BufferGeometry();
+  geometry.setAttribute("position", new Float32BufferAttribute(position, 3));
+  geometry.setAttribute("color", new Float32BufferAttribute(colour, 3));
+  geometry.setAttribute("uv", new Float32BufferAttribute(uv, 2));
+  geometry.setIndex(index);
+  geometry.computeVertexNormals();
+  return { name: "clothes_lapels", geometry, inner: false };
+}
+
 /** One column's outline in (distance from the axis, height): hugging the skin from the neckline down, then shoulders. */
 function columnProfile(theta: number, probe: Probe, s: ClothesState, cut: Cut): { pts: [number, number][]; found: boolean } {
   const pts: [number, number][] = [];
@@ -559,7 +827,7 @@ function columnProfile(theta: number, probe: Probe, s: ClothesState, cut: Cut): 
     if (hit === null) break;
     pts.push([hit + cut.thickness, y]);
   }
-  const T = torsoRadius(theta, s, cut.torsoGrow) + cut.thickness;
+  const T = torsoRadius(theta, s, cut.torsoGrow, cut.torsoWidth) + cut.thickness;
   if (!pts.length) {
     // below the bust already (a jacket's opening): straight down the torso
     pts.push([T, top], [T, CLOTHES.bottom]);

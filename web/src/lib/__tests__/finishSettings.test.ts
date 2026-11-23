@@ -24,8 +24,8 @@ describe("finish settings", () => {
 
 describe("backdrop", () => {
   it("takes a known backdrop and nothing else", () => {
-    expect(sanitizeFinish({ backdrop: "grey" }).backdrop).toBe("grey");
-    expect(sanitizeFinish({ backdrop: "toString" }).backdrop).toBe("page"); // not a backdrop, though `in` would say so
-    expect(sanitizeFinish({ backdrop: 3 }).backdrop).toBe("page");
+    expect(sanitizeFinish({ backdrop: "white" }).backdrop).toBe("white");
+    expect(sanitizeFinish({ backdrop: "toString" }).backdrop).toBe(FINISH_DEFAULTS.backdrop); // not a backdrop, though `in` would say so
+    expect(sanitizeFinish({ backdrop: 3 }).backdrop).toBe(FINISH_DEFAULTS.backdrop);
   });
 });

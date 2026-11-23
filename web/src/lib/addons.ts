@@ -214,9 +214,11 @@ function applyAddons(seconds = 0, only?: AddonCategory): void {
 /** The lashes' length, curl and fullness (lib/lashLook.ts: Style tab → Colouring → Lashes) onto the lash strands attached. */
 function applyLashLook(): void {
   const node = addonRig.meshes.eyelashes;
-  (node?.userData.setLook as ((l: { length: number; curl: number; density: number }) => void) | undefined)?.({
-    length: lashLook.length, curl: lashLook.curl, density: lashLook.density,
+  (node?.userData.setLook as ((l: { length: number; curl: number; density: number; neat: number }) => void) | undefined)?.({
+    length: lashLook.length, curl: lashLook.curl, density: lashLook.density, neat: lashLook.neat,
   });
+  // the eyebrows' fullness: 0..2 → up to 4 more hairs round each one
+  (addonRig.meshes.eyebrows?.userData.setLook as ((l: { extra: number }) => void) | undefined)?.({ extra: lashLook.brows * 2 });
 }
 lashLook.apply = applyLashLook;
 
@@ -460,7 +462,7 @@ function attach(category: AddonCategory, node: Object3D, parent: Object3D, cross
   addonRig.meshes[category] = node;
   for (const m of meshesOf(node)) if (!m.userData.groom) morphs.bind(m); // strand pieces follow the skin themselves
   applyAddons(0, category);
-  if (category === "eyelashes") applyLashLook();
+  if (category === "eyelashes" || category === "eyebrows") applyLashLook();
   if (category !== "glasses") return;
   const { fitted, unfit } = fitGlasses(node, parent); // on this face, not only the baked one
   node.userData.unfit = unfit;

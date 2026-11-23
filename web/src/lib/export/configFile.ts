@@ -93,7 +93,7 @@ export function configToMarkdown(c: ConfigFile, labels: Record<string, string> =
       ["Eye colour", words(ch.eyes)],
       ["Hair", ch.hair.style === "none" ? "none" : `${ch.hair.style}, ${words(ch.hair.colour)}`],
       ...(ch.hair.style !== "none" && ch.hair.tie
-        ? ([["Hair worn", `${{ down: "down", half: "half up", low: "low ponytail", high: "high ponytail", bun: "bun" }[ch.hair.tie] ?? ch.hair.tie}${ch.hair.tie !== "down" && ch.hair.framing ? ", face-framing strands loose" : ""}; volume ${num(ch.hair.volume)}, flyaways ${pct(ch.hair.frizz)}, shine ×${(ch.hair.shine ?? 1).toFixed(2)}, density ×${(ch.hair.density ?? 1).toFixed(2)}, strand thickness ×${(ch.hair.thickness ?? 1).toFixed(2)}`]] as [string, unknown][])
+        ? ([["Hair worn", `${{ down: "down", half: "half up", crown: "half up, crown", low: "low ponytail", high: "high ponytail", bun: "bun" }[ch.hair.tie] ?? ch.hair.tie}${ch.hair.tie !== "down" && ch.hair.framing ? ", face-framing strands loose" : ""}; volume ${num(ch.hair.volume)}, strands over the face ${pct(ch.hair.faceStrand ?? 0)}, flyaways ${pct(ch.hair.frizz)}, shine ×${(ch.hair.shine ?? 1).toFixed(2)}, density ×${(ch.hair.density ?? 1).toFixed(2)}, strand thickness ×${(ch.hair.thickness ?? 1).toFixed(2)}`]] as [string, unknown][])
         : []),
       ["Eyebrows", words(a.eyebrows)],
       ["Eyelashes", words(a.eyelashes)],
@@ -120,9 +120,12 @@ export function configToMarkdown(c: ConfigFile, labels: Record<string, string> =
         ["Shoulders", num(clothes.shoulders)],
         ["Build", num(clothes.build)],
         ["Neckline", num(clothes.neckline)],
+        ["Collar", num(clothes.collar)],
       ]),
       "",
     );
+
+  if (clothes.earrings && clothes.earrings !== "none") out.push(`Earrings: ${words(clothes.earrings)}.`, "");
 
   out.push("## Shape", "");
   const shape = Object.entries(ch.shape).sort(([x], [y]) => (labels[x] ?? x).localeCompare(labels[y] ?? y));
@@ -152,10 +155,12 @@ export function configToMarkdown(c: ConfigFile, labels: Record<string, string> =
       ["Lip finish", typeof d.lipGloss === "number" ? `×${d.lipGloss.toFixed(2)}` : "—"],
       ["Fine skin texture", typeof d.microDetail === "number" && d.microDetail > 0 ? `×${d.microDetail.toFixed(2)}` : "off"],
       ["Lip lines", typeof d.lipLines === "number" && d.lipLines > 0 ? pct(d.lipLines / 1.5) : "none"],
+      ["Face form", typeof d.philtrum === "number" ? `philtrum ×${d.philtrum.toFixed(2)}, cupid's bow ×${(d.cupidBow as number).toFixed(2)}, mouth line ×${(d.mouthLine as number).toFixed(2)}, under lip ×${(d.underLip as number).toFixed(2)}, collarbones ×${(d.collarbone as number).toFixed(2)}, jaw shadow ×${(d.jawShadow as number).toFixed(2)}, ears ×${(d.earDetail as number).toFixed(2)}` : "—"],
       ["Blush", typeof d.blushColour === "string" && d.blushColour ? `${pct(d.blush)}, ${d.blushColour}, spread ${pct(d.blushSpread)}` : `${pct(d.blush)}, spread ${pct(d.blushSpread)}`],
       ["Eye liner", typeof d.eyeLiner === "number" && d.eyeLiner > 0 ? `${pct(d.eyeLiner)}, ${d.eyeLinerColour}, wing ${pct(d.eyeLinerWing)}` : "none"],
       ["Eye shadow", typeof d.eyeShadow === "number" && d.eyeShadow > 0 ? `${pct(d.eyeShadow)}, ${d.eyeShadowColour}` : "none"],
       ["Lashes", typeof d.lashLength === "number" ? `length ×${d.lashLength.toFixed(2)}, curl ${num(d.lashCurl)}, fullness ×${(d.lashDensity as number).toFixed(2)}` : "—"],
+      ["Eyebrow fullness / neat lashes", typeof d.browFullness === "number" ? `×${d.browFullness.toFixed(2)} / ${pct(d.lashNeat as number)}` : "—"],
     ]),
     "",
   );

@@ -7,7 +7,8 @@
  *     Y up, the same origin as head.glb. The normals are the ones the app shades with (NormalRefresher's).
  *   - colour: each part's own shader is drawn once in its UV space and its colour (before any lighting) read back: the
  *     skin keeps its tone, redness, lips, eye shadow, age and stubble; the eyes their iris, pupil and veins; the inside
- *     of the mouth its shade. JPEG textures, seams padded so a filtered lookup never reaches the background.
+ *     of the mouth its shade. JPEG textures, seams padded so a filtered lookup never reaches the background. The skin
+ *     also gets a tangent-space normal map: the shader's final normal (pores, wrinkles, lip lines, philtrum, collarbones).
  *   - the cornea becomes a faint clear shell (in the app it is black and additive: reflections only).
  *
  * Strand pieces (hair, brows, lashes, strand beards) become ribbons, the child strands included
@@ -28,6 +29,7 @@ import {
   Mesh,
   MeshPhysicalMaterial,
   MeshStandardMaterial,
+  NoColorSpace,
   NormalBlending,
   type Object3D,
   Scene,
@@ -63,6 +65,7 @@ const MODEL = {
   pad: 6, // px the colour is grown past each UV island's edge
   jpeg: 0.9,
   cornea: { opacity: 0.08, roughness: 0.05 },
+  normalScale: 1, // the skin's baked normal map, 1 = as the app shades it
 };
 
 /** Inside the mouth: the colour × its shade behind the lips (lib/mouthShade.ts sets mouthT, then lights the colour). */
@@ -146,7 +149,10 @@ export async function buildModel({ strands = "children", rig = false }: { strand
       if (!mesh.isMesh) return;
       mesh.geometry.dispose();
       const m = mesh.material as MeshStandardMaterial;
-      if (!m.userData.shared) m.map?.dispose(); // the glasses' maps stay the app's
+      if (!m.userData.shared) {
+        m.map?.dispose(); // the glasses' maps stay the app's
+        m.normalMap?.dispose();
+      }
       m.dispose();
     });
   }
@@ -187,6 +193,7 @@ function addRig(items: Item[], built: Mesh[][], build: (item: Item) => Mesh[]): 
             if (m.material !== item.material) {
               const mat = m.material as MeshStandardMaterial;
               mat.map?.dispose();
+              mat.normalMap?.dispose();
               mat.dispose();
             }
           }
@@ -271,8 +278,39 @@ function baked(gl: WebGLRenderer, camera: Camera, mesh: Mesh, part: string, side
   map.colorSpace = SRGBColorSpace;
   map.userData.mimeType = "image/jpeg";
   map.name = `${part}${side ? "_" + side : ""}`;
-  return new MeshStandardMaterial({ name: map.name, map, roughness: src.roughness, metalness: 0 });
+  const material = new MeshStandardMaterial({ name: map.name, map, roughness: src.roughness, metalness: 0 });
+  if (part === "skin") {
+    // the skin's relief (pores, wrinkles, lip lines, philtrum, collarbones, scars) as a tangent-space normal map: a
+    // viewer with no skin shader still shades it
+    const normalMap = new CanvasTexture(bakeColour(gl, camera, mesh, MODEL.size.skin * 2, NORMAL_BAKE_COLOUR, true));
+    normalMap.flipY = false;
+    normalMap.colorSpace = NoColorSpace;
+    normalMap.userData.mimeType = "image/jpeg";
+    normalMap.name = "skin_normal";
+    material.normalMap = normalMap;
+    material.normalScale.set(MODEL.normalScale, MODEL.normalScale);
+  }
+  return material;
 }
+
+/**
+ * The skin's final shading normal (pores, wrinkles and everything else the shader adds) in the tangent frame a viewer
+ * builds from the UVs and positions (three's getTangentFrame), written as a normal-map texel. `normal` is the shader's
+ * result; vBakeUv is the mesh's UV, passed through by bakeColour.
+ */
+const NORMAL_BAKE_COLOUR = `NORMAL_BAKE`;
+const NORMAL_BAKE_CODE = /* glsl */ `
+  vec3 bkN = normalize(vNormal);
+  vec3 bkQ0 = dFdx(-vViewPosition), bkQ1 = dFdy(-vViewPosition);
+  vec2 bkS0 = dFdx(vBakeUv), bkS1 = dFdy(vBakeUv);
+  vec3 bkQ1p = cross(bkQ1, bkN), bkQ0p = cross(bkN, bkQ0);
+  vec3 bkT = bkQ1p * bkS0.x + bkQ0p * bkS1.x;
+  vec3 bkB = bkQ1p * bkS0.y + bkQ0p * bkS1.y;
+  float bkDet = max(dot(bkT, bkT), dot(bkB, bkB));
+  float bkSc = bkDet == 0.0 ? 0.0 : inversesqrt(bkDet);
+  vec3 bkM = vec3(dot(normal, bkT * bkSc), dot(normal, bkB * bkSc), dot(normal, bkN));
+  gl_FragColor = vec4(normalize(bkM) * 0.5 + 0.5, 1.0);
+`;
 
 /**
  * Draw `mesh` with its own material into its UV layout and read the colour back: the vertex shader puts each vertex
@@ -280,7 +318,7 @@ function baked(gl: WebGLRenderer, camera: Camera, mesh: Mesh, part: string, side
  * the lit result. Everything the shader computes from the shape (age, mouth depth, lid shadow) still sees the posed
  * mesh: the copy shares its geometry, morph weights and world matrix.
  */
-function bakeColour(gl: WebGLRenderer, camera: Camera, mesh: Mesh, size: number, colour = "diffuseColor.rgb"): HTMLCanvasElement {
+function bakeColour(gl: WebGLRenderer, camera: Camera, mesh: Mesh, size: number, colour = "diffuseColor.rgb", normal = false): HTMLCanvasElement {
   const src = materialOf(mesh);
   const material = src.clone();
   material.defines = { ...src.defines }; // copy() resets them to STANDARD/PHYSICAL: the iris map and stubble live there
@@ -288,6 +326,16 @@ function bakeColour(gl: WebGLRenderer, camera: Camera, mesh: Mesh, size: number,
   material.onBeforeCompile = (shader, renderer) => {
     src.onBeforeCompile(shader, renderer);
     shader.vertexShader = beforeEnd(shader.vertexShader, "gl_Position = vec4(uv * 2.0 - 1.0, 0.0, 1.0);");
+    if (normal) {
+      // the normal map: the shading normal in the UV frame. Every face counts as front (the UV layout's winding is
+      // arbitrary), and the mesh's UV is handed to the fragment stage for the frame.
+      shader.vertexShader = shader.vertexShader.replace("void main() {", "varying vec2 vBakeUv;\nvoid main() {");
+      shader.vertexShader = beforeEnd(shader.vertexShader, "vBakeUv = uv;");
+      shader.fragmentShader = shader.fragmentShader.replace("void main() {", "varying vec2 vBakeUv;\nvoid main() {");
+      shader.fragmentShader = shader.fragmentShader.replace(/gl_FrontFacing\s*\?\s*1\.0\s*:\s*-\s*1\.0/g, "1.0");
+      shader.fragmentShader = beforeEnd(shader.fragmentShader, NORMAL_BAKE_CODE);
+      return;
+    }
     shader.fragmentShader = beforeEnd(shader.fragmentShader, `gl_FragColor = vec4(sRGBTransferOETF(vec4(${colour}, 1.0)).rgb, 1.0);`);
   };
   material.customProgramCacheKey = () => `${src.customProgramCacheKey()}|uv-bake|${colour}`;

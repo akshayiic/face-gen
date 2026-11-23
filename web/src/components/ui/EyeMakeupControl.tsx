@@ -53,6 +53,8 @@ export function EyeMakeupControl() {
       <RangeRow label="Lash length" value={s.lashLength} min={0.6} max={1.8} step={0.05} reset={D.lashLength} low="short" high="very long" mid format={times} onChange={(lashLength) => setSkinDetails({ lashLength })} />
       <RangeRow label="Lash curl" value={s.lashCurl} min={-1} max={1} step={0.05} reset={D.lashCurl} low="straight, drooping" high="curled up" mid format={signed} onChange={(lashCurl) => setSkinDetails({ lashCurl })} />
       <RangeRow label="Lash fullness" value={s.lashDensity} min={0} max={2} step={0.05} reset={D.lashDensity} low="sparse" high="very full" mid format={times} onChange={(lashDensity) => setSkinDetails({ lashDensity })} />
+      <RangeRow label="Neat lashes" value={s.lashNeat} min={0} max={1} step={0.05} reset={D.lashNeat} low="natural" high="neat and clean" format={(v) => `${Math.round(v * 100)}%`} onChange={(lashNeat) => setSkinDetails({ lashNeat })} />
+      <RangeRow label="Eyebrow fullness" value={s.browFullness} min={0} max={2} step={0.05} reset={D.browFullness} low="sparse" high="very full" format={(v) => `×${v.toFixed(2)}`} onChange={(browFullness) => setSkinDetails({ browFullness })} />
     </>
   );
 }

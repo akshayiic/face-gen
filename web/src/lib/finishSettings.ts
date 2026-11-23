@@ -24,13 +24,13 @@ export type FinishSettings = {
   backdrop: Backdrop;
 };
 
-export const BACKDROPS = { page: "#f5f3f1", grey: "#8c8c8c", dark: "#2a2b2e", white: "#ffffff" } as const;
+export const BACKDROPS = { page: "#f5f3f1", grey: "#9d9a9a", dark: "#2a2b2e", white: "#ffffff" } as const;
 export type Backdrop = keyof typeof BACKDROPS;
 
 export const LIGHT_PRESETS = ["studio", "sun", "side"] as const;
 export type LightPreset = (typeof LIGHT_PRESETS)[number];
 
-export const FINISH_DEFAULTS: FinishSettings = { on: true, focus: 0.5, bloom: 0.5, grain: 0.5, vignette: 0.5, grade: 0.5, clarity: 0.3, skin: 0.6, light: "studio", backdrop: "page" };
+export const FINISH_DEFAULTS: FinishSettings = { on: true, focus: 0.5, bloom: 0.5, grain: 0.5, vignette: 0.5, grade: 0.5, clarity: 0.3, skin: 0.6, light: "studio", backdrop: "grey" };
 export const finishSettings: FinishSettings = { ...FINISH_DEFAULTS };
 
 const unit = (v: unknown, fallback: number) => (typeof v === "number" && Number.isFinite(v) ? Math.min(1, Math.max(0, v)) : fallback);

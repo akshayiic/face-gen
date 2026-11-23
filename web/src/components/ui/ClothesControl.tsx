@@ -12,6 +12,7 @@ import {
   CLOTHES_SERVER_SNAPSHOT,
   CLOTHES_STYLES,
   clothesSnapshot,
+  EARRINGS,
   FABRICS,
   onClothesChange,
   setClothes,
@@ -55,9 +56,23 @@ export function ClothesControl() {
           </RadioGroup>
         </div>
         {hasNeckline && <Range label="Neckline" low="shallow" high="deep" k="neckline" s={s} />}
+        {s.style === "blazer" && <Range label="Collar" low="flat" high="tall, folded over" k="collar" s={s} />}
         <Range label="Fit" low="snug" high="loose" k="fit" s={s} />
         <Range label="Shoulders" low="narrow" high="broad" k="shoulders" s={s} />
         <Range label="Build" low="slim" high="broad chest" k="build" s={s} />
+      </div>
+      <div className="px-5 py-2.5">
+        <div className="flex items-center justify-between gap-3">
+          <span className="text-body text-ink">Earrings</span>
+          <span className="text-label text-ink-3">{EARRINGS.find((e) => e.id === s.earrings)?.label}</span>
+        </div>
+        <RadioGroup label="Earrings" className="mt-2 flex flex-wrap gap-2 py-0.5">
+          {EARRINGS.map((e) => (
+            <button key={e.id} type="button" role="radio" aria-checked={s.earrings === e.id} onClick={() => setClothes({ earrings: e.id })} className="pill-secondary pill-choice h-8 px-3 text-label">
+              {e.label}
+            </button>
+          ))}
+        </RadioGroup>
       </div>
     </>
   );
@@ -99,7 +114,7 @@ function ColourRow({ title, value, onChoose }: { title: string; value: string; o
   );
 }
 
-function Range({ label, low, high, k, s }: { label: string; low: string; high: string; k: "fit" | "shoulders" | "build" | "neckline"; s: ClothesState }) {
+function Range({ label, low, high, k, s }: { label: string; low: string; high: string; k: "fit" | "shoulders" | "build" | "neckline" | "collar"; s: ClothesState }) {
   return (
     <label className="block px-5 py-2">
       <span className="flex items-baseline justify-between gap-3">

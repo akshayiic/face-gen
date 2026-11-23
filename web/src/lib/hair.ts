@@ -132,7 +132,7 @@ export function hairSnapshot(): HairSnapshot {
 const notify = (blendSeconds = 0) => {
   snapshot = {
     style: hairState.style, colour: hairState.colour, loading: hairRig.loading, failed: hairRig.failed, filesMissing: hairRig.filesMissing,
-    tie: hairState.tie, framing: hairState.framing, volume: hairState.volume, frizz: hairState.frizz, shine: hairState.shine,
+    tie: hairState.tie, framing: hairState.framing, volume: hairState.volume, faceStrand: hairState.faceStrand, frizz: hairState.frizz, shine: hairState.shine,
     density: hairState.density, thickness: hairState.thickness,
   };
   for (const fn of listeners) fn(blendSeconds);
@@ -265,7 +265,7 @@ function applyHair(seconds = 0): void {
 
 /** Tie, framing and volume (re-shaping the strands, only when they changed for this group) and frizz and shine. */
 function applyWear(group: Group): void {
-  const shape: HairShape = { tie: hairState.tie, framing: hairState.framing, volume: hairState.volume };
+  const shape: HairShape = { tie: hairState.tie, framing: hairState.framing, volume: hairState.volume, faceStrand: hairState.faceStrand };
   const key = JSON.stringify(shape);
   const reshape = group.userData.reshape as ((s: HairShape) => boolean) | undefined;
   if (reshape && group.userData.shapeKey !== key && reshape(shape)) group.userData.shapeKey = key;

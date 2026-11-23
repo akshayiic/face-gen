@@ -78,15 +78,29 @@ export type SkinDetails = {
   lashLength: number;
   lashCurl: number;
   lashDensity: number;
+  /** Face form (the skin shader, lib/skinShader.ts): 0..2 each (underLip 0..1.5: 1 as scanned, below it the shadow is lifted) */
+  philtrum: number;
+  cupidBow: number;
+  mouthLine: number;
+  underLip: number;
+  collarbone: number;
+  jawShadow: number;
+  earDetail: number;
+  /** Eyebrow fullness 0..2 (more hairs per brow) and neat lashes 0..1 (lib/lashLook.ts) */
+  browFullness: number;
+  lashNeat: number;
 };
 
+/** The "Realistic" preset of lib/skinRealism.ts is the starting skin: a smooth shell is what reads as CG. */
 export const SKIN_DETAILS_DEFAULTS: SkinDetails = {
-  blush: 0, freckles: 0, moles: 0, moleSize: 0.4, moleSeed: 1, pores: 1, underEye: 1, variation: 1, veins: 0.4, eyeRims: 0.25,
-  wrinkles: 0, expression: 1, sun: 0, sunSpots: 0, capillaries: 0, oiliness: 1, sweat: 0, grime: 0,
+  blush: 0, freckles: 0, moles: 0, moleSize: 0.4, moleSeed: 1, pores: 1.3, underEye: 1.15, variation: 1.3, veins: 0.5, eyeRims: 0.45,
+  wrinkles: 0, expression: 1, sun: 0, sunSpots: 0, capillaries: 0.1, oiliness: 1, sweat: 0, grime: 0,
   lipColour: "", lipOpacity: 0.85, lipLiner: 0, lipLinerColour: "", lipGloss: 1,
-  microDetail: 0, lipLines: 0, blushColour: "", blushSpread: 0,
+  microDetail: 1, lipLines: 0.6, blushColour: "", blushSpread: 0,
   eyeLiner: 0, eyeLinerWing: 0.5, eyeLinerColour: "#1c1517", eyeShadow: 0, eyeShadowColour: "#7a5a52",
   lashLength: 1, lashCurl: 0, lashDensity: 1,
+  philtrum: 1, cupidBow: 1, mouthLine: 1, underLip: 0.35, collarbone: 0.7, jawShadow: 1, earDetail: 1,
+  browFullness: 0.5, lashNeat: 0.6,
 };
 export const skinDetails: SkinDetails = { ...SKIN_DETAILS_DEFAULTS };
 
@@ -136,6 +150,15 @@ export function sanitizeSkinDetails(raw: unknown): SkinDetails {
     lashLength: clamp(r.lashLength, 0.6, 1.8, d.lashLength),
     lashCurl: clamp(r.lashCurl, -1, 1, d.lashCurl),
     lashDensity: clamp(r.lashDensity, 0, 2, d.lashDensity),
+    philtrum: clamp(r.philtrum, 0, 2, d.philtrum),
+    cupidBow: clamp(r.cupidBow, 0, 2, d.cupidBow),
+    mouthLine: clamp(r.mouthLine, 0, 2, d.mouthLine),
+    underLip: clamp(r.underLip, 0, 1.5, d.underLip),
+    collarbone: clamp(r.collarbone, 0, 2, d.collarbone),
+    jawShadow: clamp(r.jawShadow, 0, 2, d.jawShadow),
+    earDetail: clamp(r.earDetail, 0, 2, d.earDetail),
+    browFullness: clamp(r.browFullness, 0, 2, d.browFullness),
+    lashNeat: clamp(r.lashNeat, 0, 1, d.lashNeat),
   };
 }
 
@@ -211,6 +234,15 @@ export function applySkinDetails(): void {
   u.uMicro.value = skinDetails.microDetail;
   applyMicro(); // the fine texture and its define (once the amount is above zero)
   u.uLipLines.value = skinDetails.lipLines;
+  u.uPhiltrum.value = skinDetails.philtrum;
+  u.uCupid.value = skinDetails.cupidBow;
+  u.uMouthLine.value = skinDetails.mouthLine;
+  u.uUnderLip.value = skinDetails.underLip;
+  u.uCollarbone.value = skinDetails.collarbone;
+  u.uJawShade.value = skinDetails.jawShadow;
+  u.uEarDetail.value = skinDetails.earDetail;
+  // the shader's face-form block runs when any of it is on, or the shadow under the lip is lifted
+  u.uFormOn.value = skinDetails.philtrum > 0 || skinDetails.cupidBow > 0 || skinDetails.mouthLine > 0 || skinDetails.underLip < 1 || skinDetails.collarbone > 0 || skinDetails.jawShadow > 0 || skinDetails.earDetail > 0 ? 1 : 0;
   u.uBlushTint.value.set(...blushTint(skinDetails.blushColour));
   u.uBlushSpread.value = skinDetails.blushSpread;
   u.uLiner.value = skinDetails.eyeLiner;
@@ -221,6 +253,8 @@ export function applySkinDetails(): void {
   lashLook.length = skinDetails.lashLength;
   lashLook.curl = skinDetails.lashCurl;
   lashLook.density = skinDetails.lashDensity;
+  lashLook.neat = skinDetails.lashNeat;
+  lashLook.brows = skinDetails.browFullness;
   lashLook.apply?.(); // the lash strands on the head (lib/addons.ts)
   setWrinkleSettings(skinDetails.wrinkles, skinDetails.expression);
   const spots = molePlaces(skinDetails.moleSeed);

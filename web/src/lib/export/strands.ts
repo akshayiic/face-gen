@@ -37,7 +37,7 @@ export type StrandMode = "guides" | "children";
  * Tweak freely: the ribbons' surface. A flat ribbon reflects the room like a card (4% at full specular), which on dark
  * hair outweighs the colour and reads grey; the app's own strand highlights are faint (GROOM.spec1/spec2).
  */
-const STRANDS = { roughness: 0.7, specular: 0.15 };
+const STRANDS = { roughness: 0.6, specular: 0.15, sheen: 0.7, sheenRoughness: 0.45, sheenColor: "#7d6a5c" };
 
 const DEG = Math.PI / 180;
 const MAX_VERTS = 65535;
@@ -93,7 +93,11 @@ export function strandMeshes(groom: Mesh, m: Matrix4, mode: StrandMode, name: st
   const jitter = u.uJitter.value as number, shadowFloor = u.uShadowFloor.value as number, rampAmount = u.uRampAmount.value as number;
 
   const out: Mesh[] = [];
-  const material = new MeshPhysicalMaterial({ name, vertexColors: true, roughness: STRANDS.roughness, specularIntensity: STRANDS.specular, metalness: 0, side: DoubleSide });
+  // the sheen is the soft sheet of light along a lock that the app's strand highlights give: a flat ribbon has no other
+  const material = new MeshPhysicalMaterial({
+    name, vertexColors: true, roughness: STRANDS.roughness, specularIntensity: STRANDS.specular, metalness: 0, side: DoubleSide,
+    ...(name === "hair" ? { sheen: STRANDS.sheen, sheenRoughness: STRANDS.sheenRoughness, sheenColor: new Color(STRANDS.sheenColor) } : {}), // not the brows or lashes
+  });
   let chunk = newChunk(MAX_VERTS);
 
   // per strand, its points as the shader places them

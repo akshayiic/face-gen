@@ -37,6 +37,8 @@ varying float vLong;
 varying float vShade;
 varying float vCover;
 varying float vRand;
+varying float vLock;
+varying float vRootFade;
 varying vec3 vTan;
 varying vec3 vViewPos;
 uniform float uRampLen;
@@ -143,6 +145,10 @@ void main() {
   vLong = clamp(distance(fetchP(s, uPoints - 1).xyz, fetchP(s, 0).xyz) / 0.15, 0.0, 1.0); // 1 = a long strand
   vShade = P.w;
   vRand = hash(id + 11.0);
+  vLock = hash(float(s) * 3.71 + 0.5); // one value per lock: the parent and all its children
+  // a child strand fades in over its first few points (each its own distance): the hairline thins out into baby hairs
+  // instead of ending in a hard edge where the roots stop
+  vRootFade = c > 0 ? smoothstep(0.0, 0.16, t - 0.05 * hash(id + 31.0)) : 1.0;
   vTan = tv;
   vViewPos = mv.xyz;
 }
@@ -159,13 +165,15 @@ uniform vec3 uSky;
 uniform vec3 uGround;
 uniform vec3 uUpView;
 uniform float uDiffuse, uSpec1, uSpec2, uShift1, uShift2, uExp1, uExp2, uJitter, uShadowFloor, uTipFade, uTipSpec, uRampAmount;
-uniform float uShine, uTT, uGlint, uSheenTint;
+uniform float uShine, uTT, uGlint, uSheenTint, uLock;
 varying float vT;
 varying float vRamp;
 varying float vLong;
 varying float vShade;
 varying float vCover;
 varying float vRand;
+varying float vLock;
+varying float vRootFade;
 varying vec3 vTan;
 varying vec3 vViewPos;
 
@@ -184,7 +192,7 @@ void main() {
   vec3 T = normalize(vTan);
   vec3 V = normalize(-vViewPos);
   vec3 N = normalize(V - T * dot(V, T));
-  float shade = mix(uShadowFloor, 1.0, vShade);
+  float shade = mix(uShadowFloor, 1.0, vShade) * mix(1.0, 0.7 + 0.5 * vLock, uLock); // locks: some darker, some lit
   vec3 colour = albedo * mix(uGround, uSky, 0.5 + 0.5 * dot(N, uUpView)) * shade;
   // glints: the secondary highlight sparkles along the strand (its scales catch the light unevenly)
   float glint = mix(1.0, 0.35 + 1.3 * fract(sin(floor(vT * 36.0 + vRand * 91.0) * 12.9898) * 43758.5453), uGlint);
@@ -207,7 +215,7 @@ void main() {
   }
   #endif
   // Long hair thins out at the tips; short hair ends bluntly (faded short tips dither into speckle).
-  float alpha = vCover * (1.0 - uTipFade * vLong * smoothstep(0.85, 1.0, vT));
+  float alpha = vCover * mix(0.2, 1.0, vRootFade) * (1.0 - uTipFade * vLong * smoothstep(0.85, 1.0, vT));
   gl_FragColor = vec4(colour, alpha);
   #include <tonemapping_fragment>
   #include <colorspace_fragment>

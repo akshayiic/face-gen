@@ -97,8 +97,8 @@ describe("realistic skin presets", () => {
     expect(detectRealism({ ...SKIN_DETAILS_DEFAULTS, ...REALISM_PRESETS[2].patch, pores: 1.9 })).toBeNull();
   });
 
-  it("Smooth is the defaults, so a new visitor has it chosen", () => {
-    expect(detectRealism(SKIN_DETAILS_DEFAULTS)).toBe("off");
+  it("Realistic is the defaults, so a new visitor has it chosen", () => {
+    expect(detectRealism(SKIN_DETAILS_DEFAULTS)).toBe("realistic");
   });
 
   it("gets stronger from Natural to Hyper-real", () => {
@@ -130,8 +130,8 @@ describe("blush colours and the other new settings", () => {
   });
 
   it("lashes start as they were drawn", () => {
-    expect(LASH_DEFAULTS).toEqual({ length: 1, curl: 0, density: 1 });
-    expect(SKIN_DETAILS_DEFAULTS).toMatchObject({ lashLength: 1, lashCurl: 0, lashDensity: 1, microDetail: 0, lipLines: 0, eyeLiner: 0, eyeShadow: 0 });
+    expect(LASH_DEFAULTS).toMatchObject({ length: 1, curl: 0, density: 1 });
+    expect(SKIN_DETAILS_DEFAULTS).toMatchObject({ lashLength: 1, lashCurl: 0, lashDensity: 1, microDetail: 1, lipLines: 0.6, eyeLiner: 0, eyeShadow: 0 });
   });
 
   it("hair density and thickness are kept in range (older saves get 1)", () => {

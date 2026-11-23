@@ -36,6 +36,7 @@ import { askLimiter, geometryKey, readySpan, wantSpan } from "@/lib/morphs/capsC
 import { limiter, loadedLimits, plainStore } from "@/lib/morphs/limiter";
 import { precomputeVariations, randomFace, randomFaceAsync, randomState, strikingFeatures, varyFace, variationNotches } from "@/lib/morphs/random";
 import { morphs } from "@/lib/morphs/store";
+import { skinShape, skinSurface } from "@/lib/skinSurface";
 import { perf } from "@/lib/perf";
 import { characterSettled } from "@/lib/character";
 import { quality, setTier } from "@/lib/quality";
@@ -70,6 +71,8 @@ if (debugHandle) {
   window.__faceToVoice = {
     // face state
     morphs,
+    skinSurface,
+    skinShape,
     currentLook,
     characterSettled,
     random: { randomFace, randomFaceAsync, varyFace, precomputeVariations, variationNotches, randomState, strikingFeatures, defs: visibleSliders },

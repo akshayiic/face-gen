@@ -24,12 +24,12 @@ export const EYE_LOOK = {
   limbal: 0.65, // the dark ring at the iris edge before the iris texture arrives (the texture has its own)
   veins: 0.45, // red veins on the sclera, strongest in the corners
   corners: 0.2, // sclera a little pinker towards the corners
-  lidShadow: 0.4, // how dark the upper lid's shadow on the eyeball gets
+  lidShadow: 0.55, // how dark the upper lid's shadow on the eyeball gets
   // from this height above the eye centre (mm) the shadow starts … and is full (the open lid sits ~3 mm above the
   // centre)
   lidShadowMm: [-1.0, 3.5],
-  lowerLid: 0.2, // the lower lid's softer contact shadow
-  cornerShade: 0.25, // the eyeball turning away into the corners
+  lowerLid: 0.28, // the lower lid's softer contact shadow
+  cornerShade: 0.35, // the eyeball turning away into the corners
   caruncle: 0.6, // pink inner corner
   limbalEdge: 0.3, // the iris colour's brightness at its very edge (match iris.ktx2's limbal ring)
 };

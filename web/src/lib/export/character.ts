@@ -36,7 +36,7 @@ export function currentCharacter(): CharacterFile {
     intensity: round(emotionRig.intensity, 4),
     // the named keys only: GSAP keeps a hidden `_gsap` cache on the object it tweens
     pose: Object.fromEntries((Object.keys(POSE_LIMITS) as PoseKey[]).map((k) => [k, round(poseRig.base[k], 2)])),
-    hair: { style: hairState.style, colour: hairState.colour, tie: hairState.tie, framing: hairState.framing, volume: round(hairState.volume, 3), frizz: round(hairState.frizz, 3), shine: round(hairState.shine, 3), density: round(hairState.density, 3), thickness: round(hairState.thickness, 3) },
+    hair: { style: hairState.style, colour: hairState.colour, tie: hairState.tie, framing: hairState.framing, volume: round(hairState.volume, 3), faceStrand: round(hairState.faceStrand, 3), frizz: round(hairState.frizz, 3), shine: round(hairState.shine, 3), density: round(hairState.density, 3), thickness: round(hairState.thickness, 3) },
     addons: { ...addonState },
     skin: skinState.tone,
     eyes: eyeState.colour,

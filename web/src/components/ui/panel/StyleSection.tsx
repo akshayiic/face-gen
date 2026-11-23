@@ -11,6 +11,7 @@ import { EyeControl } from "@/components/ui/EyeControl";
 import { FinishControl } from "@/components/ui/FinishControl";
 import { HairControl } from "@/components/ui/HairControl";
 import { EyeMakeupControl } from "@/components/ui/EyeMakeupControl";
+import { FaceFormControl } from "@/components/ui/FaceFormControl";
 import { LipMakeupControl } from "@/components/ui/LipMakeupControl";
 import { RealisticSkinControl } from "@/components/ui/RealisticSkinControl";
 import { SkinControl } from "@/components/ui/SkinControl";
@@ -30,6 +31,7 @@ export function StyleSection() {
         <RealisticSkinControl />
         <SkinDetailsControl />
         <LipMakeupControl />
+        <FaceFormControl />
         <EyeMakeupControl />
         <SkinTextureControl />
         <ScanMapsControl />

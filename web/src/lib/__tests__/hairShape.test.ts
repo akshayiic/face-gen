@@ -48,7 +48,7 @@ const strandLen = (pos: Float32Array, s: number) => {
   return l;
 };
 const dist = (pos: Float32Array, i: number) => Math.hypot(pos[i * 3] - C[0], pos[i * 3 + 1] - C[1], pos[i * 3 + 2] - C[2]);
-const shape = (s: Partial<HairShape>): HairShape => ({ tie: "down", framing: false, volume: 0, ...s });
+const shape = (s: Partial<HairShape>): HairShape => ({ tie: "down", framing: false, volume: 0, faceStrand: 0, ...s });
 
 describe("hair shape", () => {
   it("knows the skin's radius in every direction", () => {
@@ -111,7 +111,8 @@ describe("hair shape", () => {
   });
 
   it("checks stored values", () => {
-    expect(sanitizeHairShape({ tie: "dreads", framing: "yes", volume: 5 })).toEqual({ tie: "down", framing: true, volume: 1 });
-    expect(sanitizeHairShape({ tie: "bun", framing: false, volume: -0.3 })).toEqual({ tie: "bun", framing: false, volume: -0.3 });
+    expect(sanitizeHairShape({ tie: "dreads", framing: "yes", volume: 5 })).toEqual({ tie: "down", framing: true, volume: 1, faceStrand: 0 });
+    expect(sanitizeHairShape({ tie: "bun", framing: false, volume: -0.3 })).toEqual({ tie: "bun", framing: false, volume: -0.3, faceStrand: 0 });
+    expect(sanitizeHairShape({ tie: "crown", faceStrand: 4 })).toMatchObject({ tie: "crown", faceStrand: 1 });
   });
 });

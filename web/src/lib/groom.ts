@@ -119,11 +119,16 @@ function scalpNow(): Scalp | null {
  * a beard's extra strands spread wider round their parent (childSpread × its childRadiusMm), filling gaps between clumps.
  */
 const GROOM_KIND = {
-  head: { childSpread: 1.0, shade: { shadowFloor: 0.1, jitter: 0.55, diffuse: 0.45 } },
-  beard: { childSpread: 1.8, shade: { shadowFloor: 0.12, jitter: 0.5, diffuse: 0.5 } },
-  brows: { childSpread: 1.0, shade: { jitter: 0.45 } },
-  lashes: { childSpread: 1.0, shade: {} },
-} satisfies Record<string, { childSpread: number; shade: Partial<Pick<typeof GROOM, "shadowFloor" | "jitter" | "diffuse">> }>;
+  // head: a flatter root → tip ramp (the ombré of the stock grooms reads as a wig), more child strands than the tier's
+  // (a few thousand strands stand for ~100k: more of them, in locks, is what stops long hair looking stringy), and
+  // `lock`: how much whole locks (a parent and its children) differ in brightness, so the hair has depth and clumps.
+  head: { childSpread: 1.0, childBoost: 1.35, lock: 0.45, coverMax: 1, shade: { shadowFloor: 0.1, jitter: 0.55, diffuse: 0.45, rampAmount: 0.28 } },
+  beard: { childSpread: 1.8, childBoost: 1, lock: 0, coverMax: 1, shade: { shadowFloor: 0.12, jitter: 0.5, diffuse: 0.5 } },
+  // brows: ~1,300 hairs each at least 0.8 px wide merge into one black stroke at full cover; at about two-thirds cover each
+  // hair reads as a hair (the skin shows between them) and the brow gets the soft, tapered look of a photograph
+  brows: { childSpread: 1.0, childBoost: 1, lock: 0, coverMax: 0.65, shade: { jitter: 0.65 } },
+  lashes: { childSpread: 1.0, childBoost: 1, lock: 0, coverMax: 1, shade: {} },
+} satisfies Record<string, { childSpread: number; childBoost: number; lock: number; coverMax: number; shade: Partial<Pick<typeof GROOM, "shadowFloor" | "jitter" | "diffuse" | "rampAmount">> }>;
 
 export type GroomDef = {
   count: number;
@@ -295,7 +300,7 @@ export async function buildGroom(
         uTipW: { value: def.tipWidth },
         uMinPx: { value: GROOM.minPx },
         uPxScale: { value: 0.001 },
-        uCoverMin: { value: def.coverMin ?? GROOM.coverMin },
+        uCoverMin: { value: Math.min(def.coverMin ?? GROOM.coverMin, kind.coverMax) },
         uRampLen: { value: def.rampMm ? def.rampMm / 1000 : GROOM.rampLength },
         uCentre: { value: new Vector3(...GROOM.centre) },
         uEyeFollow: { value: def.eyeFollow ? GROOM.lashTurn : 0 },
@@ -321,7 +326,8 @@ export async function buildGroom(
         uShadowFloor: { value: G.shadowFloor },
         uTipFade: { value: GROOM.tipFade },
         uTipSpec: { value: GROOM.tipSpec },
-        uRampAmount: { value: GROOM.rampAmount },
+        uRampAmount: { value: G.rampAmount },
+        uLock: { value: kind.lock },
         uFrizz: { value: 0 },
         uShine: { value: 1 },
         uLashLen: { value: 1 },
@@ -366,10 +372,11 @@ export async function buildGroom(
   mesh.userData.groomDef = def; // the 3D model export rebuilds the strands from it (lib/export/strands.ts)
 
   // how this groom is worn (userData.setLook): fewer or more child strands than the tier's, thinner or thicker strands
-  const look = { frizz: 0, shine: 1, density: 1, thickness: 1, length: 1, curl: 0 };
+  const look = { frizz: 0, shine: 1, density: 1, thickness: 1, length: 1, curl: 0, extra: 0, neat: 0 };
   const applyTier = () => {
     const { children, widthScale } = tierCount(def);
-    geometry.instanceCount = n * (1 + Math.round(children * look.density));
+    // `extra`: more hairs per strand on top of the tier's (a brow's file has none: its eyebrow-fullness setting)
+    geometry.instanceCount = n * (1 + Math.round(children * look.density * kind.childBoost + look.extra));
     material.uniforms.uWidth.value = (def.widthMm / 1000) * widthScale * look.thickness;
   };
   applyTier();
@@ -448,6 +455,9 @@ export async function buildGroom(
     material.uniforms.uShine.value = look.shine;
     material.uniforms.uLashLen.value = look.length;
     material.uniforms.uLashCurl.value = look.curl;
+    // neat lashes: each lash's children stay close to it and the strand-to-strand shimmer goes
+    material.uniforms.uChildR.value = (def.childRadiusMm / 1000) * kind.childSpread * (1 - 0.75 * look.neat);
+    material.uniforms.uJitter.value = G.jitter * (1 - 0.8 * look.neat);
     applyTier();
   };
   group.userData.dispose = () => {

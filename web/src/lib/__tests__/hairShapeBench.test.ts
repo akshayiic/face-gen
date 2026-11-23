@@ -21,7 +21,7 @@ describe("hair shape speed", () => {
       for (let k = 0; k < P; k++) src.set([C[0] + d[0] * (R + 0.002), C[1] + d[1] * R - k * 0.01, C[2] + d[2] * (R + 0.002)], (s * P + k) * 3);
     }
     const t = performance.now();
-    const res = shapeStrands(src, new Float32Array(N * P).fill(0.6), N, P, { tie: "low", framing: true, volume: 0.4 }, scalp);
+    const res = shapeStrands(src, new Float32Array(N * P).fill(0.6), N, P, { tie: "low", framing: true, volume: 0.4, faceStrand: 0 }, scalp);
     const shade = bakeHairShade({ positions: res.positions, n: N, p: P, width: 0.1 });
     expect(shade.every((v) => v >= 0 && v <= 1)).toBe(true);
     expect(performance.now() - t).toBeLessThan(5000); // ~0.25 s on a laptop; generous for a loaded CI machine

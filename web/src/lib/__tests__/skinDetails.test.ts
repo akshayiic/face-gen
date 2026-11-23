@@ -82,18 +82,21 @@ describe("skin details", { timeout: 30_000 }, () => {
 
   it("checks stored and linked values field by field", () => {
     expect(sanitizeSkinDetails({ blush: 9, freckles: -1, moles: 40.4, moleSeed: "x", pores: "deep", variation: 7, veins: -2, extra: 1 })).toEqual({
-      blush: 1, freckles: 0, moles: MAX_MOLES, moleSize: 0.4, moleSeed: 1, pores: 1, underEye: 1, variation: 2, veins: 0, eyeRims: 0.25,
-      wrinkles: 0, expression: 1, sun: 0, sunSpots: 0, capillaries: 0, oiliness: 1, sweat: 0, grime: 0,
+      blush: 1, freckles: 0, moles: MAX_MOLES, moleSize: 0.4, moleSeed: 1, pores: 1.3, underEye: 1.15, variation: 2, veins: 0, eyeRims: 0.45,
+      wrinkles: 0, expression: 1, sun: 0, sunSpots: 0, capillaries: 0.1, oiliness: 1, sweat: 0, grime: 0,
       lipColour: "", lipOpacity: 0.85, lipLiner: 0, lipLinerColour: "", lipGloss: 1,
-      microDetail: 0, lipLines: 0, blushColour: "", blushSpread: 0, eyeLiner: 0, eyeLinerWing: 0.5, eyeLinerColour: "#1c1517", eyeShadow: 0, eyeShadowColour: "#7a5a52",
+      microDetail: 1, lipLines: 0.6, blushColour: "", blushSpread: 0, eyeLiner: 0, eyeLinerWing: 0.5, eyeLinerColour: "#1c1517", eyeShadow: 0, eyeShadowColour: "#7a5a52",
       lashLength: 1, lashCurl: 0, lashDensity: 1,
+      philtrum: 1, cupidBow: 1, mouthLine: 1, underLip: 0.35, collarbone: 0.7, jawShadow: 1, earDetail: 1, browFullness: 0.5, lashNeat: 0.6,
     });
+    // the face form (philtrum, jaw shadow, ears …), eyebrow fullness and neat lashes are clamped
+    expect(sanitizeSkinDetails({ philtrum: 9, underLip: 9, collarbone: -1, browFullness: 7, lashNeat: 3 })).toMatchObject({ philtrum: 2, underLip: 1.5, collarbone: 0, browFullness: 2, lashNeat: 1 });
     // lip makeup: colours are "#rrggbb" or nothing, amounts are clamped
     expect(sanitizeSkinDetails({ lipColour: "#C23B3B", lipOpacity: 4, lipLiner: -1, lipLinerColour: "red", lipGloss: 9 })).toMatchObject({
       lipColour: "#c23b3b", lipOpacity: 1, lipLiner: 0, lipLinerColour: "", lipGloss: 2,
     });
     // a link from before tone variation and veins existed gets their defaults
-    expect(sanitizeSkinDetails({ blush: 0.2 })).toMatchObject({ variation: 1, veins: 0.4 });
+    expect(sanitizeSkinDetails({ blush: 0.2 })).toMatchObject({ variation: 1.3, veins: 0.5 });
     expect(sanitizeSkin({ mode: "photo", amount: 2, scale: 1, keepTone: "yes" })).toEqual({ mode: "tile", amount: 1, scale: 15, keepTone: true });
     expect(sanitizeHair({ amount: -3 })).toEqual({ amount: 0 });
   });

@@ -17,16 +17,25 @@
  * Tweak in HAIR_SHAPE.
  */
 
-export const HAIR_TIES = ["down", "half", "low", "high", "bun"] as const;
+export const HAIR_TIES = ["down", "half", "crown", "low", "high", "bun"] as const;
 export type HairTie = (typeof HAIR_TIES)[number];
-export type HairShape = { tie: HairTie; framing: boolean; volume: number };
-export const HAIR_SHAPE_DEFAULTS: HairShape = { tie: "down", framing: true, volume: 0 };
+/** `faceStrand` (0..1): how many loose strands from the temple fall across the cheek (a lock over the face). */
+export type HairShape = { tie: HairTie; framing: boolean; volume: number; faceStrand: number };
+export const HAIR_SHAPE_DEFAULTS: HairShape = { tie: "down", framing: true, volume: 0, faceStrand: 0 };
 
 export const HAIR_SHAPE = {
   centre: [0, 0.29, 0.005] as [number, number, number], // the head's centre (m): directions and the scalp radius are from here
   lift: 0.0035, // tied hair lies this far off the scalp (m)
   // where each tie sits: elevation (degrees, from the centre, at the back of the head) and its band's radius (m)
-  ties: { half: { pitch: 22, band: 0.007 }, low: { pitch: -24, band: 0.008 }, high: { pitch: 34, band: 0.008 }, bun: { pitch: 2, band: 0.012 } },
+  // `puff`: how far (m) the strands from the front lift off the scalp on their way to the tie (the crown's pouf)
+  ties: {
+    half: { pitch: 22, band: 0.007, puff: 0 },
+    crown: { pitch: 38, band: 0.014, puff: 0.016 },
+    low: { pitch: -24, band: 0.008, puff: 0 },
+    high: { pitch: 34, band: 0.008, puff: 0 },
+    bun: { pitch: 2, band: 0.012, puff: 0 },
+  },
+  faceStrand: { share: 0.3, minLength: 0.22, cheek: [0.043, 0.232, 0.072] as [number, number, number], lift: 0.0028 }, // m: the share of the temple's strands (at 1), the cheek they reach, how far off the skin they lie
   tailOut: 0.03, // a tail first leaves the head this far before it falls (m)
   tailSpread: 0.022, // how much wider a tail fans by its ends (m)
   bunRadius: [0.012, 0.034] as [number, number], // a bun's coil, inner and outer (m)
@@ -45,10 +54,11 @@ export function sanitizeHairShape(raw: unknown): HairShape {
     tie: HAIR_TIES.includes(r.tie as HairTie) ? (r.tie as HairTie) : d.tie,
     framing: typeof r.framing === "boolean" ? r.framing : d.framing,
     volume: typeof r.volume === "number" && Number.isFinite(r.volume) ? Math.min(1, Math.max(-1, r.volume)) : d.volume,
+    faceStrand: typeof r.faceStrand === "number" && Number.isFinite(r.faceStrand) ? Math.min(1, Math.max(0, r.faceStrand)) : d.faceStrand,
   };
 }
 
-export const isPlainShape = (s: HairShape) => s.tie === "down" && Math.abs(s.volume) < 1e-3;
+export const isPlainShape = (s: HairShape) => s.tie === "down" && Math.abs(s.volume) < 1e-3 && s.faceStrand < 1e-3;
 
 // --- the scalp -------------------------------------------------------------------------------------------------------
 
@@ -182,7 +192,26 @@ export function shapeStrands(src: Float32Array, srcShade: Float32Array, n: numbe
       dev.push(sub(pts[k], mul(m, 1 / cnt)));
     }
     const framing = shape.framing && rootDir[2] > 0.35 && Math.abs(rootDir[0]) > 0.22 && rootDir[1] < 0.75 && rnd(s, 1) < H.framingShare;
-    const tied = !!tie && !framing && (shape.tie !== "half" || rootDir[1] > 0.3 || (rootDir[1] > 0.12 && rootDir[2] > 0.2));
+    const tied = !!tie && !framing && ((shape.tie !== "half" && shape.tie !== "crown") || rootDir[1] > 0.3 || (rootDir[1] > 0.12 && rootDir[2] > 0.2));
+    // writes a strand's new curve (it keeps its length), putting the style's waves back on
+    const commit = (curve: V[], pathLen: number) => {
+      // resample at the strand's own arc lengths (it keeps its length), then put its waves back
+      const cl = [0];
+      for (let j = 1; j < curve.length; j++) cl.push(cl[j - 1] + len(sub(curve[j], curve[j - 1])));
+      let seg = 1;
+      for (let k = 0; k < p; k++) {
+        const want = Math.min(arc[k], cl[cl.length - 1]);
+        while (seg < cl.length - 1 && cl[seg] < want) seg++;
+        const t = (want - cl[seg - 1]) / Math.max(1e-9, cl[seg] - cl[seg - 1]);
+        let q = add(curve[seg - 1], mul(sub(curve[seg], curve[seg - 1]), Math.max(0, Math.min(1, t))));
+        const onScalp = arc[k] < pathLen;
+        q = add(q, mul(dev[k], onScalp ? 0.25 : 1));
+        if (k === 0) q = root;
+        out.set(q, o + k * 3);
+        // shade: lying on the scalp, half lit; in a tail or bun, darker towards its middle
+        shade[s * p + k] = onScalp ? 0.75 : 0.45 + 0.5 * Math.sqrt(rnd(s, 7));
+      }
+    };
     if (tied && total > 1e-4) {
       // this strand's place in the band and its own tail direction
       const ang = rnd(s, 2) * Math.PI * 2, rr = Math.sqrt(rnd(s, 3));
@@ -195,7 +224,9 @@ export function shapeStrands(src: Float32Array, srcShade: Float32Array, n: numbe
       for (let j = 0; j <= steps; j++) {
         const u = j / steps;
         const d = slerp(rootDir, tieDir, u);
-        const r = surf(d) + lift0 * (1 - u) + (H.lift + Math.max(0, vol) * 0.004) * smooth(0, 0.2, u);
+        // the pouf: strands from the front rise over the crown on their way to the tie
+        const puff = tie!.puff * Math.sin(Math.PI * u) ** 1.5 * smooth(-0.1, 0.6, rootDir[2]);
+        const r = surf(d) + lift0 * (1 - u) + (H.lift + Math.max(0, vol) * 0.004) * smooth(0, 0.2, u) + puff;
         path.push(add(add(c, mul(d, r)), mul(bandOff, band * smooth(0.6, 1, u))));
       }
       const gate = path[path.length - 1];
@@ -229,22 +260,28 @@ export function shapeStrands(src: Float32Array, srcShade: Float32Array, n: numbe
           }
         }
       }
-      // resample at the strand's own arc lengths (it keeps its length), then put its waves back
-      const cl = [0];
-      for (let j = 1; j < curve.length; j++) cl.push(cl[j - 1] + len(sub(curve[j], curve[j - 1])));
-      let seg = 1;
-      for (let k = 0; k < p; k++) {
-        const want = Math.min(arc[k], cl[cl.length - 1]);
-        while (seg < cl.length - 1 && cl[seg] < want) seg++;
-        const t = (want - cl[seg - 1]) / Math.max(1e-9, cl[seg] - cl[seg - 1]);
-        let q = add(curve[seg - 1], mul(sub(curve[seg], curve[seg - 1]), Math.max(0, Math.min(1, t))));
-        const onScalp = arc[k] < pathLen;
-        q = add(q, mul(dev[k], onScalp ? 0.25 : 1));
-        if (k === 0) q = root;
-        out.set(q, o + k * 3);
-        // shade: lying on the scalp, half lit; in a tail or bun, darker towards its middle
-        shade[s * p + k] = onScalp ? 0.75 : 0.45 + 0.5 * Math.sqrt(rnd(s, 7));
+      commit(curve, pathLen);
+    } else if (shape.faceStrand > 0 && total > H.faceStrand.minLength && rootDir[0] > 0.25 && rootDir[2] > 0.15 && rootDir[1] < 0.9 && rnd(s, 40) < H.faceStrand.share * shape.faceStrand) {
+      // a lock over the face: from the temple, lying on the skin across the cheek, then hanging past the jaw
+      const cheek: V = norm(sub([H.faceStrand.cheek[0] + (rnd(s, 41) - 0.5) * 0.02, H.faceStrand.cheek[1] + (rnd(s, 42) - 0.5) * 0.03, H.faceStrand.cheek[2]], c));
+      const lift0 = Math.max(0, len(sub(root, c)) - surf(rootDir));
+      const path: V[] = [];
+      for (let j = 0; j <= 20; j++) {
+        const u = j / 20;
+        const d = slerp(rootDir, cheek, u);
+        path.push(add(c, mul(d, surf(d) + lift0 * (1 - u) + H.faceStrand.lift * smooth(0, 0.15, u))));
       }
+      const curve: V[] = [...path];
+      const pathLen = path.reduce((acc, q, j) => (j ? acc + len(sub(q, path[j - 1])) : 0), 0);
+      const rest = total - pathLen;
+      const end = path[path.length - 1];
+      const sway = (rnd(s, 43) - 0.5) * 0.01;
+      for (let j = 1; j <= Math.max(4, Math.ceil(rest / 0.006)); j++) {
+        const l = Math.min(rest, j * 0.006);
+        // down past the jaw, drifting out and back towards the shoulder
+        curve.push([end[0] + 0.028 * (1 - Math.exp(-l / 0.06)) + sway, end[1] - l, end[2] - 0.03 * (1 - Math.exp(-l / 0.08))]);
+      }
+      commit(curve, pathLen);
     }
     if (vol !== 0) {
       // fuller or flatter: away from (towards) the head, growing over the first few cm

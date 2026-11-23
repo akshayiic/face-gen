@@ -36,6 +36,7 @@ import {
 const TIES: { id: HairTie; label: string }[] = [
   { id: "down", label: "Down" },
   { id: "half", label: "Half up" },
+  { id: "crown", label: "Half up, crown" },
   { id: "low", label: "Low ponytail" },
   { id: "high", label: "High ponytail" },
   { id: "bun", label: "Bun" },
@@ -148,6 +149,7 @@ export function HairControl() {
             )}
           </div>
           <RangeRow label="Volume" value={state.volume} min={-1} max={1} step={0.05} reset={0} low="flat" high="full" mid format={(v) => `${v > 0 ? "+" : ""}${Math.round(v * 100)}%`} onChange={(volume) => setHairWear({ volume })} />
+          <RangeRow label="Strands over the face" value={state.faceStrand} min={0} max={1} step={0.05} reset={HAIR_WEAR_DEFAULTS.faceStrand} low="none" high="a few locks" format={pct} onChange={(faceStrand) => setHairWear({ faceStrand })} />
           <RangeRow label="Flyaways" value={state.frizz} min={0} max={1} step={0.05} reset={HAIR_WEAR_DEFAULTS.frizz} low="sleek" high="frizzy" format={pct} onChange={(frizz) => setHairWear({ frizz })} />
           <RangeRow label="Density" value={state.density} min={0} max={2} step={0.05} reset={HAIR_WEAR_DEFAULTS.density} low="thin, see-through" high="very dense" mid format={(v) => `×${v.toFixed(2)}`} onChange={(density) => setHairWear({ density })} />
           <RangeRow label="Strand thickness" value={state.thickness} min={0.5} max={1.8} step={0.05} reset={HAIR_WEAR_DEFAULTS.thickness} low="fine, silky" high="coarse" mid format={(v) => `×${v.toFixed(2)}`} onChange={(thickness) => setHairWear({ thickness })} />
