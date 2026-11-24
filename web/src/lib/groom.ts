@@ -73,7 +73,7 @@ export const GROOM = {
   minPx: 0.8, // a strand is drawn at least this wide (pixels); its coverage fades the rest …
   coverMin: 1.0, // … but never below this: a few thousand strands stand for ~100k real ones, each must count (MSAA smooths the edges)
   jitter: 0.32, // per-strand brightness variation (±half of this; it also breaks up an even sheen)
-  ambientSky: [0.3, 0.3, 0.32] as [number, number, number], // linear, × the hair colour
+  ambientSky: [0.3, 0.3, 0.32] as [number, number, number], // linear, × the hair colour; the calibration of hairAmbient
   ambientGround: [0.1, 0.09, 0.08] as [number, number, number],
   diffuse: 0.6,
   // Kajiya-Kay highlights are wide (any strand at right angles to the half vector lights up): keep them weak and sharp.
@@ -101,6 +101,16 @@ export const GROOM = {
   rootSinkMm: 2.0, // roots start this deep under the skin (× 0.35–1.45 per strand): a ragged hairline, strands emerging one by one
   tipLoss: 0.2, // a child strand may stop up to this much of its length early (layers; the ends do not make one cut line)
   rootDark: 0.5, // how much darker the hair is at the scalp (it lies in the scalp's shadow)
+};
+
+/**
+ * The hair's ambient light (uSky/uGround), shared by every groom: hair, brows, lashes and beards. One Vector3 each, so
+ * Lighting.tsx can retune them all in place as the light preset and the environment strength change — strand hair has no
+ * environment map of its own (Kajiya-Kay, lib/groomShader.ts), so this is its image-based light.
+ */
+export const hairAmbient = {
+  sky: new Vector3(...GROOM.ambientSky),
+  ground: new Vector3(...GROOM.ambientGround),
 };
 
 /** The skin's radius round the head centre (lib/hairShape.ts), for the skin registration it was made from. */
@@ -316,8 +326,8 @@ export async function buildGroom(
         uEyeR: { value: null },
         uEyeL0: { value: new Vector3().fromArray(manifest.nodes.left_eye.pivot) },
         uEyeR0: { value: new Vector3().fromArray(manifest.nodes.right_eye.pivot) },
-        uSky: { value: new Vector3(...GROOM.ambientSky) },
-        uGround: { value: new Vector3(...GROOM.ambientGround) },
+        uSky: { value: hairAmbient.sky },
+        uGround: { value: hairAmbient.ground },
         uUpView: { value: new Vector3(0, 1, 0) },
         uDiffuse: { value: G.diffuse },
         uSpec1: { value: GROOM.spec1 * (def.shine ?? 1) },

@@ -4,12 +4,15 @@
  *  - Iris + pupil: one material for both meshes. The pupil is a disc drawn by radius, so its edge is a true circle
  *    (the pupil mesh's own boundary is jagged). The iris pattern is a generated texture (iris.ktx2, `uv run eye-maps`:
  *    fibres, collarette, crypts, furrows, limbal ring) tinted by the visitor's eye colour (lib/eyes.ts).
- *  - Sclera: off-white, warmer and faintly veined towards the corners, a soft grey ring round the iris.
+ *  - Sclera: off-white, warmer and faintly veined towards the corners, a soft grey ring round the iris, and a thin
+ *    wet line (the waterline) where each lid meets the eyeball: lighter in colour and glossy, so the key light picks
+ *    it out as the streak a real eye has.
  *  - Lid shadow (both): the upper lid shades the top of the eyeball. It is measured in head space, not the eye's,
  *    so it stays under the lid when the eye turns.
  *  - Cornea (scene/materials.ts): GNM's clear eye shell, drawn as reflections only (additive), gives the wet highlight.
  *    It gets its own copy of the scene's environment (setCorneaEnvironment): three uses the scene's environment
  *    strength for any material without its own envMap, which would leave the cornea as dim as the skin's reflections.
+ *    The studio's catchlight card (Lighting.tsx) is the crisp dot inside the broad softbox glow it reflects.
  * Tweak here: EYE_LOOK.
  */
 import { Color, Matrix4, type MeshPhysicalMaterial, type Object3D, type Scene, type Texture, Vector3 } from "three";
@@ -32,6 +35,11 @@ export const EYE_LOOK = {
   cornerShade: 0.35, // the eyeball turning away into the corners
   caruncle: 0.6, // pink inner corner
   limbalEdge: 0.3, // the iris colour's brightness at its very edge (match iris.ktx2's limbal ring)
+  // the waterline: where the lids meet the eyeball the tear film pools into a thin wet line, which catches the
+  // light (its roughness drops in the shader's own roughness patch, so the key lights it up as a streak)
+  wetMm: [-2.3, 2.8, 0.55] as [number, number, number], // above the lower lid, below the upper … and its softness (mm)
+  wet: 0.7, // how much the wet line shows (lighter colour, and glossy)
+  wetOuter: 0.4, // the line's strength at the inner corner, next to the tear duct (a wet pool there reads as goo)
 };
 
 export const eyeUniforms = {
@@ -53,6 +61,9 @@ export const eyeUniforms = {
   uIrisMap: { value: null as Texture | null },
   uIrisColour: { value: new Color() }, // the iris material's colour, by reference (installIrisShader)
   uLimbalEdge: { value: EYE_LOOK.limbalEdge },
+  uWetMm: { value: new Vector3(...EYE_LOOK.wetMm) }, // x: the lower lid's line, y: the upper's, z: the lines' softness
+  uWet: { value: EYE_LOOK.wet },
+  uWetOuter: { value: EYE_LOOK.wetOuter },
 };
 
 const tmp = new Vector3();
@@ -81,8 +92,11 @@ uniform float uLidMm[2];
 uniform sampler2D uIrisMap;
 uniform vec3 uIrisColour;
 uniform float uLimbalEdge;
+uniform vec3 uWetMm;
+uniform float uWet, uWetOuter;
 varying vec3 vEyeHead;
 varying vec2 vEyeUv;
+float eyeWet = 0.0; // the waterline's wet line (0..1), set by the sclera, read by its roughness patch
 float eyeHash(vec3 p) { return fract(sin(dot(p, vec3(12.9898, 78.233, 37.719))) * 43758.5453); }
 float eyeNoise(vec3 p) {
   vec3 i = floor(p), f = fract(p);
@@ -152,15 +166,31 @@ const SCLERA = /* glsl */ `
   // the limbus: the white starts in the iris's own dark rim colour and fades to white, so nothing changes colour
   // across the meshes' jagged boundary and the visible edge is this smooth circle
   col = mix(uIrisColour * uLimbalEdge, col, smoothstep(uIrisR + 0.004, uIrisR + 0.026, r));
+  // the waterline: the tear film pools where each lid meets the eyeball — a thin wet line, slightly lighter (the
+  // film is clear and the skin behind it pale), glossy in the roughness patch so the key lights it as a streak.
+  // Strongest over the outer two thirds of the lower lid; towards the tear duct it fades (a wet pool there reads
+  // as goo, not life) — eyeLocal().x runs towards the nose.
+  vec2 wd = eyeLocal();
+  eyeWet = clamp(exp(-pow((wd.y - uWetMm.x) / uWetMm.z, 2.0)) + 0.55 * exp(-pow((wd.y - uWetMm.y) / uWetMm.z, 2.0)), 0.0, 1.0)
+    * (1.0 - smoothstep(8.0, 11.0, abs(wd.x)))
+    * mix(uWetOuter, 1.0, smoothstep(2.0, -4.0, wd.x)) * uWet;
+  col *= 1.0 + 0.25 * eyeWet;
   diffuseColor.rgb = col * eyeLid();
 }
 `;
 
-function install(material: MeshPhysicalMaterial, body: string, key: string): void {
+// The wet line is a film of tears: glossy, where the sclera around it is matte.
+const SCLERA_ROUGH = /* glsl */ `
+#include <roughnessmap_fragment>
+roughnessFactor = mix(roughnessFactor, 0.14, eyeWet);
+`;
+
+function install(material: MeshPhysicalMaterial, body: string, key: string, rough?: string): void {
   material.onBeforeCompile = (shader) => {
     Object.assign(shader.uniforms, eyeUniforms);
     shader.vertexShader = VERTEX + shader.vertexShader.replace("#include <worldpos_vertex>", VERTEX_MAIN);
     shader.fragmentShader = FRAGMENT + shader.fragmentShader.replace("#include <color_fragment>", body);
+    if (rough) shader.fragmentShader = shader.fragmentShader.replace("#include <roughnessmap_fragment>", rough);
   };
   material.customProgramCacheKey = () => key;
   // three only declares `uv` (and the vUv chain) when a map uses it; the shader reads it itself
@@ -172,7 +202,7 @@ export function installIrisShader(m: MeshPhysicalMaterial): void {
   install(m, IRIS, "eye-iris-v1");
   eyeUniforms.uIrisColour.value = m.color; // by reference: the sclera's limbus follows eye colour changes and blends
 }
-export const installScleraShader = (m: MeshPhysicalMaterial) => install(m, SCLERA, "eye-sclera-v1");
+export const installScleraShader = (m: MeshPhysicalMaterial) => install(m, SCLERA, "eye-sclera-v2", SCLERA_ROUGH);
 
 /** Fetch the iris texture after the head is on screen (Head.tsx) and switch the iris shader to it (one recompile). */
 export async function loadEyeMaps(iris: MeshPhysicalMaterial): Promise<void> {
@@ -182,7 +212,7 @@ export async function loadEyeMaps(iris: MeshPhysicalMaterial): Promise<void> {
 }
 
 /** How much brighter the cornea's reflections are than the scene's environment light (a clear catchlight). */
-const CORNEA_BOOST = 1.8;
+const CORNEA_BOOST = 2.2;
 let cornea: MeshPhysicalMaterial | null = null;
 let lastScene: Scene | null = null;
 

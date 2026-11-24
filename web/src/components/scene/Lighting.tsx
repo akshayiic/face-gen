@@ -34,11 +34,13 @@ import {
   Scene,
   type Texture,
   type ToneMapping,
+  Vector3,
   type WebGLRenderer,
 } from "three";
 
 import { setCorneaEnvironment } from "@/lib/eyeShader";
 import { finishSettings, type LightPreset, onFinishChange } from "@/lib/finishSettings";
+import { GROOM, hairAmbient } from "@/lib/groom";
 import { revealedSnapshot, subscribeRevealed } from "@/lib/headLoad";
 import { onTier, tierSettings } from "@/lib/quality";
 
@@ -63,6 +65,11 @@ export const LIGHTING = {
       rimRight: { position: [2.2, 1.4, -2.4], size: [0.7, 3.2], color: "#e8eeff", intensity: 7 },
       top: { position: [0, 3.2, 0.2], size: [1.6, 1.6], color: "#ffffff", intensity: 0.8 },
       floor: { position: [0, -2.4, 1.0], size: [5.0, 5.0], color: "#d9c3ad", intensity: 0.22 },
+      // the catchlight card: a small very bright panel in the key light's own direction (a beauty dish beside the
+      // softbox). The big softbox's reflection only washes the eye; this one is the crisp, clipped dot a portrait
+      // has — sitting on the same ray as the key directional's own highlight, so the two read as one catchlight with
+      // a bright core and a soft surround — and a compact sparkle in the skin's oily sheen.
+      catchlight: { position: [-1.22, 1.24, 1.88], size: [0.32, 0.4], color: "#fff8ee", intensity: 15 },
     } satisfies Record<string, Panel>,
   },
   /** Directional lights for crisp shape (they also make the speculars that the panels only blur). */
@@ -167,6 +174,7 @@ export const lightingRig = {
       lightingRig.scene.environmentIntensity = LIGHTING.environmentIntensity;
       setCorneaEnvironment(lightingRig.scene);
     }
+    setHairAmbient();
     for (const k of ["key", "fill", "rim"] as const) {
       const light = lightingRig.lights[k];
       if (!light) continue;
@@ -180,6 +188,35 @@ export const lightingRig = {
     lightingRig.rebuildStudio?.();
   },
 };
+
+/**
+ * Retune the hair's ambient (lib/groom.ts hairAmbient, shared by every groom) from the studio panels and the
+ * environment's strength: its colour from the panels above and below the head, its level from GROOM's calibration
+ * scaled by how strong the environment is now. Strand hair has no environment map of its own (Kajiya-Kay,
+ * lib/groomShader.ts), so this is what makes a preset change reach it.
+ */
+function setHairAmbient(): void {
+  const scale = LIGHTING.environmentIntensity / 0.5; // 1 at the studio default the calibration was made at
+  const side = (above: boolean, calib: Vector3, out: Vector3) => {
+    const sum = new Color(0, 0, 0);
+    let n = 0;
+    for (const p of Object.values(LIGHTING.studio.panels)) {
+      if ((p.position[1] > LIGHTING.target[1]) !== above) continue;
+      sum.add(new Color(p.color).multiplyScalar(p.intensity));
+      n++;
+    }
+    if (n === 0) {
+      out.copy(calib);
+      return;
+    }
+    // linear: the panels' mean colour, weighted by their intensity (Color is linear here: hex → working space)
+    const mean = new Vector3(sum.r, sum.g, sum.b).multiplyScalar(1 / n);
+    const bright = mean.length() || 1;
+    out.copy(mean).multiplyScalar((calib.length() * scale) / bright); // hold the calibrated level, scaled by the env
+  };
+  side(true, new Vector3(...GROOM.ambientSky), hairAmbient.sky);
+  side(false, new Vector3(...GROOM.ambientGround), hairAmbient.ground);
+}
 
 /** The studio as a tiny three scene: a dim box room with emissive panels facing the head. */
 function studioScene(): Scene {
@@ -211,6 +248,7 @@ function installStudio(gl: WebGLRenderer, scene: Scene): () => void {
     scene.environment = env;
     scene.environmentIntensity = LIGHTING.environmentIntensity;
     setCorneaEnvironment(scene); // the cornea's own copy, so its brightness applies (lib/eyeShader.ts)
+    setHairAmbient(); // the strand hair's stand-in for the image-based light it can't sample
     pmrem.dispose();
     studio.traverse((o) => {
       if ((o as Mesh).isMesh) {

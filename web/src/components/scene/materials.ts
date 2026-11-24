@@ -6,9 +6,9 @@
  * environment map in Lighting.tsx plus a key, a fill and a rim light; nothing casts or receives
  * shadows. Hair materials live in lib/hair.ts.
  *
- * The look is a neutral product render on a light backdrop: muted, matte skin (no pink or
- * orange cast, so the voice orbs stay the only saturated colour on the page), eyes with a
- * softened clearcoat for a small catchlight, teeth a touch off-white.
+ * The look is a neutral product render on a light backdrop: muted skin colour (no pink or orange cast, so the voice
+ * orbs stay the only saturated colour on the page) with its specular at real skin's measured strength (the shader's
+ * pores and cavities hold the sheen down), eyes with a wet clearcoat and a crisp catchlight, teeth a touch off-white.
  */
 import { AdditiveBlending, Color, MeshPhysicalMaterial } from "three";
 
@@ -27,7 +27,10 @@ const FACTORIES: Record<string, Factory> = {
       color: new Color(skinHex()), // the visitor's skin tone (lib/skin.ts)
       roughness: 0.74,
       metalness: 0,
-      specularIntensity: 0.25,
+      // F0 at ior 1.4 ≈ 0.028, as measured on real skin (Weyrich et al.): the tight highlight and the broad sheen
+      // the skin shader draws (two GGX lobes, their strength held down by the pores' cavity) both read on it. A
+      // lower value mutes them into waxiness — the one number that most says "CG".
+      specularIntensity: 1,
       ior: 1.4, // skin
       sheen: 0.08, // faint peach-fuzz rim
       sheenRoughness: 0.9,
@@ -53,10 +56,11 @@ const FACTORIES: Record<string, Factory> = {
     return m;
   },
   // The clear eye shell: black and additive, so only its reflections show (the catchlight and the wet sheen).
-  // Its reflections are CORNEA_BOOST × the environment (lib/eyeShader.ts setCorneaEnvironment).
+  // Its reflections are CORNEA_BOOST × the environment (lib/eyeShader.ts setCorneaEnvironment), the studio's
+  // catchlight card the crisp dot at the heart of them.
   cornea: () => {
     const m = new MeshPhysicalMaterial({
-      color: new Color("#000000"), roughness: 0.04, metalness: 0, specularIntensity: 1, ior: 1.376,
+      color: new Color("#000000"), roughness: 0.03, metalness: 0, specularIntensity: 1, ior: 1.376,
       transparent: true, blending: AdditiveBlending, depthWrite: false,
     });
     registerCornea(m);

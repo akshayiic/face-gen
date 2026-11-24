@@ -122,7 +122,11 @@ describe("src/proxy.ts", () => {
       for (const name of readdirSync(dir)) {
         const path = join(dir, name);
         if (statSync(path).isDirectory()) walk(path);
-        else if (name === "route.ts" && asks.test(readFileSync(path, "utf8"))) routes.push(path.slice(path.indexOf("/api/")).replace(/\/route\.ts$/, ""));
+        else if (name === "route.ts" && asks.test(readFileSync(path, "utf8"))) {
+          // join() writes backslashes on Windows: normalise before cutting the /api/… path out
+          const norm = path.replace(/\\/g, "/");
+          routes.push(norm.slice(norm.indexOf("/api/")).replace(/\/route\.ts$/, ""));
+        }
       }
     };
     walk(join(process.cwd(), "src/app/api"));
