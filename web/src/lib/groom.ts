@@ -97,10 +97,18 @@ export const GROOM = {
   tt: 0.35, // light through backlit strands (× the light, the hair colour); brows and lashes get a third
   glint: 0.6, // how unevenly the secondary highlight sparkles along a strand (0 = an even sheen)
   sheenTint: 0.7, // how blue-white the highlights of dark hair are (0 = plain white); light hair's stay neutral
+  // The broad sheen: the strand lobes (exp 140, 30) only light strands across the half vector — where hair lies along
+  // it (a crown combed back, hair lying flat) they find nothing, and the crown reads dead black. This lobe is the
+  // surface's own gloss: the softbox and the sky smeared over the hair, the band of light that runs over a crown.
+  spec3: 0.06,
+  exp3: 7,
+  specFloor: 0.55, // the specular's own shadow floor: a highlight survives inside the hair's shade (light bounces between the strands)
   // Head hair only: it grows OUT of the scalp and is cut, not moulded.
   rootSinkMm: 2.0, // roots start this deep under the skin (× 0.35–1.45 per strand): a ragged hairline, strands emerging one by one
   tipLoss: 0.2, // a child strand may stop up to this much of its length early (layers; the ends do not make one cut line)
   rootDark: 0.5, // how much darker the hair is at the scalp (it lies in the scalp's shadow)
+  rootDarkMm: 8, // … and how far that reaches: 8 mm, the depth of real roots' shadow (35 mm darkened the whole crown of short hair)
+  rootWobbleMm: 0.25, // a per-strand jitter over the first stretch: a smooth combed crown reads as a shell, and this breaks it into micro-clumps
 };
 
 /**
@@ -350,6 +358,11 @@ export async function buildGroom(
         uTrunc: { value: tintScalp ? GROOM.tipLoss : 0 },
         uSink: { value: GROOM.rootSinkMm / 1000 },
         uRootDark: { value: tintScalp ? GROOM.rootDark : 0 },
+        uRootDarkMm: { value: GROOM.rootDarkMm / 1000 },
+        uRootWobble: { value: GROOM.rootWobbleMm / 1000 },
+        uSpecFloor: { value: GROOM.specFloor },
+        uSpec3: { value: GROOM.spec3 * (def.shine ?? 1) },
+        uExp3: { value: GROOM.exp3 },
         uSheenTint: { value: GROOM.sheenTint },
         uTT: { value: GROOM.tt * (fine || soft ? 0.33 : 1) },
         uGlint: { value: GROOM.glint },

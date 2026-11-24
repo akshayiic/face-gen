@@ -790,9 +790,11 @@ const SCALP = /* glsl */ `
 #include <alphamap_fragment>
 vec3 scalpC = sRGBTransferEOTF(vec4(uScalpColour, 1.0)).rgb * uScalpDarken;
 // The cover is per vertex (the skin's triangles show as a stepped edge): thresholded against noise, the hairline's edge
-// frays into patches of darker skin, as the shadow of single hairs does, and tapers off where the hair thins.
-float scalpN = ageNoise(vRest * 0.45) * 0.65 + ageNoise(vRest * 1.7) * 0.35;
-float scalpA = smoothstep(0.12, 0.9, clamp(vHairCover, 0.0, 1.0) + (scalpN - 0.5) * 0.7);
+// frays into patches of darker skin, as the shadow of single hairs does. The tint starts only under fairly dense hair
+// (0.35 of full cover): the sparse fringe at the edge is strands over plain skin, which is what a real hairline is —
+// a dark band reaching the skin reads as a wig's edge.
+float scalpN = ageNoise(vRest * 0.45) * 0.6 + ageNoise(vRest * 0.9) * 0.4;
+float scalpA = smoothstep(0.35, 0.85, clamp(vHairCover, 0.0, 1.0) + (scalpN - 0.5) * 0.55);
 diffuseColor.rgb = mix(diffuseColor.rgb, scalpC, scalpA * scalpA * uScalp);
 `;
 

@@ -5,7 +5,10 @@
  * flying away from the head (uFrizz, head hair). Fragment: Kajiya-Kay hair lighting from the scene's directional lights,
  * the self-shadow baked per point (re-baked when the style is re-shaped: lib/hairShadow.ts bakeHairShade) and the
  * root → tip colour ramp; light shining through backlit strands (uTT); glints along the secondary highlight; and a shine
- * control (uShine).
+ * control (uShine). Three specular lobes: the two strand lobes (sharp white, broad tinted) that light strands crossing
+ * the half vector, and a broad surface sheen (uSpec3) for where hair lies along it — a crown combed back — which without
+ * it renders dead black; the specular keeps its own shadow floor (uSpecFloor), so highlights survive inside the hair's
+ * shade as they do on real hair.
  */
 
 export const VERTEX = /* glsl */ `
@@ -47,6 +50,10 @@ uniform float uLashLen, uLashCurl; // lashes: × their length, and how far the t
 uniform float uNatural; // head hair: roots sunk into the scalp and thin, tips of uneven length (1); anything else 0
 uniform float uTrunc; // … how much of a strand's length its tip may lose (the layers of a cut)
 uniform float uSink; // … how deep (m) a root starts under the skin
+uniform float uRootDarkMm; // how far from the root the scalp's shadow reaches (m)
+uniform float uRootWobble; // the root-region micro-clump jitter (m)
+uniform float uSpecFloor; // the specular's own shadow floor (the highlight survives the hair's shade)
+uniform float uSpec3, uExp3; // the broad sheen lobe: the surface's own gloss (the softbox and sky over the hair)
 varying float vRootD;
 
 vec4 fetchP(int s, int k) {
@@ -158,6 +165,18 @@ void main() {
     float sink = uSink * (0.35 + 1.1 * hash(float(s) * 1.37 + 4.1)) * (k == 0 ? 1.0 : 0.3);
     pos -= normalize(P.xyz - uCentre) * sink;
   }
+  if (uNatural > 0.5) {
+    // the crown's micro-clumps: where hair is combed smooth over the scalp every strand lies on its neighbours' line,
+    // and the surface reads as a moulded shell. A tiny per-strand jitter over the first stretch (every strand its own
+    // phase and strength) breaks the tangents out of alignment, so the sheen breaks up with them. Ramped in past the
+    // sink zone, so it never lifts a root off the skin it grows from.
+    vec3 out2 = normalize(P.xyz - uCentre);
+    vec3 m1 = normalize(cross(T, out2));
+    vec3 m2 = cross(m1, T);
+    float rd = distance(P.xyz, fetchP(s, 0).xyz);
+    float amp = uRootWobble * (0.3 + 0.7 * hash(id + 17.0)) * smoothstep(0.004, 0.012, rd);
+    pos += (m1 * sin(t * 40.0 + hash(id + 29.0) * 6.2831853) + m2 * cos(t * 34.0 + hash(id + 43.0) * 6.2831853)) * amp;
+  }
   vec4 mv = modelViewMatrix * vec4(pos, 1.0);
   vec3 tv = normalize((modelViewMatrix * vec4(T, 0.0)).xyz);
   vec3 side = normalize(cross(tv, normalize(-mv.xyz)));
@@ -199,6 +218,7 @@ uniform vec3 uGround;
 uniform vec3 uUpView;
 uniform float uDiffuse, uSpec1, uSpec2, uShift1, uShift2, uExp1, uExp2, uJitter, uShadowFloor, uTipFade, uTipSpec, uRampAmount;
 uniform float uShine, uTT, uGlint, uSheenTint, uLock, uRootDark;
+uniform float uRootDarkMm, uSpecFloor, uSpec3, uExp3;
 varying float vRootD;
 varying float vT;
 varying float vRamp;
@@ -227,7 +247,10 @@ void main() {
   vec3 V = normalize(-vViewPos);
   vec3 N = normalize(V - T * dot(V, T));
   float shade = mix(uShadowFloor, 1.0, vShade) * mix(1.0, 0.7 + 0.5 * vLock, uLock); // locks: some darker, some lit
-  shade *= mix(1.0 - uRootDark, 1.0, smoothstep(0.0, 0.035, vRootD)); // the roots lie in the scalp's shadow: the hair has depth
+  shade *= mix(1.0 - uRootDark, 1.0, smoothstep(0.0, uRootDarkMm, vRootD)); // the roots lie in the scalp's shadow: the hair has depth
+  // the specular's own shadow: light bounces between the strands, so a highlight shows well inside the hair's shade
+  // (the diffuse floor would crush it: a crown with no highlight reads as a black hole)
+  float specShade = mix(uSpecFloor, 1.0, vShade) * mix(1.0, 0.7 + 0.5 * vLock, uLock);
   vec3 colour = albedo * mix(uGround, uSky, 0.5 + 0.5 * dot(N, uUpView)) * shade;
   // glints: the secondary highlight sparkles along the strand (its scales catch the light unevenly)
   float glint = mix(1.0, 0.35 + 1.3 * fract(sin(floor(vT * 36.0 + vRand * 91.0) * 12.9898) * 43758.5453), uGlint);
@@ -242,8 +265,15 @@ void main() {
     vec3 H = normalize(L + V);
     float s1 = kk(normalize(T + N * (uShift1 + (vRand - 0.5) * 0.08)), H, uExp1);
     float s2 = kk(normalize(T + N * uShift2), H, uExp2);
+    // the broad sheen: the hair surface's own gloss (the softbox and sky smeared over it). The strand lobes (s1, s2)
+    // only light strands that cross the half vector; where hair lies along it — a crown combed back, hair lying flat —
+    // they find nothing, and the top of the head goes dead. This is the band of light that runs over a crown, broken
+    // up per strand (and shared by a lock, which keeps it from crossing whole locks at once).
+    float s3 = pow(clamp(dot(N, H), 0.0, 1.0), uExp3) * (0.6 + 0.8 * vRand) * mix(0.8, 1.2, vLock);
     float facing = smoothstep(-0.3, 0.4, dot(N, L));
-    colour += Lc * shade * (albedo * diff * uDiffuse + facing * uShine * (uSpec1 * mix(1.0, uTipSpec, vRamp) * sheenC * s1 + uSpec2 * s2 * glint * albedo));
+    colour += Lc * shade * albedo * diff * uDiffuse;
+    colour += Lc * specShade * facing * uShine
+      * (uSpec1 * mix(1.0, uTipSpec, vRamp) * sheenC * s1 + uSpec2 * s2 * glint * albedo + uSpec3 * s3 * sheenC);
     // light through the strand from behind (the rims): a warm glow on the edges of the hair
     float back = pow(clamp(dot(-L, V), 0.0, 1.0), 4.0);
     colour += Lc * albedo * back * uTT * (0.6 + 0.4 * vRand) * sqrt(albedo + 0.02);
