@@ -789,7 +789,11 @@ if (skinMole > 0.0) normal = ageBump(-vViewPosition, normal, skinMole * 0.25, fa
 const SCALP = /* glsl */ `
 #include <alphamap_fragment>
 vec3 scalpC = sRGBTransferEOTF(vec4(uScalpColour, 1.0)).rgb * uScalpDarken;
-diffuseColor.rgb = mix(diffuseColor.rgb, scalpC, clamp(vHairCover, 0.0, 1.0) * uScalp);
+// The cover is per vertex (the skin's triangles show as a stepped edge): thresholded against noise, the hairline's edge
+// frays into patches of darker skin, as the shadow of single hairs does, and tapers off where the hair thins.
+float scalpN = ageNoise(vRest * 0.45) * 0.65 + ageNoise(vRest * 1.7) * 0.35;
+float scalpA = smoothstep(0.12, 0.9, clamp(vHairCover, 0.0, 1.0) + (scalpN - 0.5) * 0.7);
+diffuseColor.rgb = mix(diffuseColor.rgb, scalpC, scalpA * scalpA * uScalp);
 `;
 
 // Helpers for the weathering and the scanned maps: after DECL and lib/age.ts, so skinHash3 and ageNoise exist

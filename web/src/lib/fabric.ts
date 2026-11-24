@@ -11,29 +11,39 @@ import type { MeshPhysicalMaterial } from "three";
 
 import type { FabricId } from "@/lib/clothes";
 
-export const FABRIC_LOOK: Record<FabricId, { code: number; depthMm: number; groove: number }> = {
-  cotton: { code: 0, depthMm: 0.08, groove: 0.06 },
-  knit: { code: 1, depthMm: 0.35, groove: 0.24 },
-  satin: { code: 2, depthMm: 0, groove: 0 },
-  denim: { code: 3, depthMm: 0.12, groove: 0.22 },
-  leather: { code: 4, depthMm: 0.1, groove: 0.07 },
+// drape: how deep (mm) the cloth's folds are (long vertical creases, broad wrinkles) and how dark their valleys: what makes
+// a garment hang on a body instead of being a smooth shell. Stiff cloth (denim, leather) folds less, satin and knit more.
+export const FABRIC_LOOK: Record<FabricId, { code: number; depthMm: number; groove: number; drapeMm: number; drapeDark: number }> = {
+  cotton: { code: 0, depthMm: 0.08, groove: 0.06, drapeMm: 4.5, drapeDark: 0.34 },
+  knit: { code: 1, depthMm: 0.35, groove: 0.24, drapeMm: 4.5, drapeDark: 0.3 },
+  satin: { code: 2, depthMm: 0, groove: 0, drapeMm: 5.0, drapeDark: 0.36 },
+  denim: { code: 3, depthMm: 0.12, groove: 0.22, drapeMm: 3.0, drapeDark: 0.26 },
+  leather: { code: 4, depthMm: 0.1, groove: 0.07, drapeMm: 2.6, drapeDark: 0.22 },
 };
 
 /** Shared by the outer garment and the top under it (they are the same fabric). */
-export const fabricUniforms = { uFabric: { value: 0 }, uFabricDepth: { value: 0.08 }, uFabricGroove: { value: 0.06 } };
+export const fabricUniforms = {
+  uFabric: { value: 0 },
+  uFabricDepth: { value: 0.08 },
+  uFabricGroove: { value: 0.06 },
+  uDrape: { value: 4.5 },
+  uDrapeDark: { value: 0.34 },
+};
 
 export function setFabric(id: FabricId): void {
   const f = FABRIC_LOOK[id] ?? FABRIC_LOOK.cotton;
   fabricUniforms.uFabric.value = f.code;
   fabricUniforms.uFabricDepth.value = f.depthMm;
   fabricUniforms.uFabricGroove.value = f.groove;
+  fabricUniforms.uDrape.value = f.drapeMm;
+  fabricUniforms.uDrapeDark.value = f.drapeDark;
 }
 
 const DECL = /* glsl */ `
 uniform int uFabric;
-uniform float uFabricDepth, uFabricGroove;
+uniform float uFabricDepth, uFabricGroove, uDrape, uDrapeDark;
 varying vec3 vFabric; // the garment's own space, mm
-float fabricH = 0.5, fabricFade = 0.0;
+float fabricH = 0.5, fabricFade = 0.0, drapeH = 0.5;
 float fbHash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
 float fbNoise(vec2 p) {
   vec2 i = floor(p), f = fract(p);
@@ -72,6 +82,19 @@ float fabricHeight(vec2 p, out float cell) {
   cell = 0.7; // cotton: a fine plain weave
   return 0.5 + 0.3 * sin(p.x * 6.2831853 / 0.7) * sin(p.y * 6.2831853 / 0.7) + 0.2 * (fbNoise(p * 1.7) - 0.5);
 }
+// The folds (0..1, mm space): long creases hanging down that wander, over broader wrinkles. Not a texture: a field in the
+// garment's own coordinates, so it holds still as the head turns and is the same on both sides of the cloth.
+float drapeHeight(vec2 p) {
+  // the creases wander both ways, so no two run alike
+  p += 14.0 * vec2(fbNoise(p * 0.016 + 4.3) - 0.5, fbNoise(p * 0.016 + 11.9) - 0.5);
+  vec2 q = vec2(p.x * 0.7 + p.y * 0.12, p.y * 0.9 - p.x * 0.08); // a little askew from vertical
+  float w = fbNoise(vec2(q.x * 0.042, q.y * 0.015) + 3.7);
+  float w2 = fbNoise(vec2(q.x * 0.09 + 1.9, q.y * 0.03));
+  float v = fbNoise(vec2(p.x * 0.017 + 9.1, p.y * 0.026));
+  float ridge = 1.0 - abs(2.0 * w - 1.0); // a crease: sharp-ish at the top, wide in the valley
+  float where = smoothstep(0.25, 0.75, fbNoise(p * 0.011 + 21.0)); // some stretches hang smooth, others are creased
+  return clamp(0.5 + (0.45 * (ridge - 0.5) + 0.25 * (1.0 - abs(2.0 * w2 - 1.0) - 0.5) + 0.5 * (v - 0.5)) * (0.35 + 0.9 * where), 0.0, 1.0);
+}
 vec3 fabricBump(vec3 surfPos, vec3 n, float h, float faceDir) {
   vec3 sx = dFdx(surfPos), sy = dFdy(surfPos);
   vec3 r1 = cross(sy, n), r2 = cross(n, sx);
@@ -90,12 +113,14 @@ const COLOUR = /* glsl */ `
   float px = max(length(fwidth(vFabric)), 1e-4); // mm per pixel here
   fabricFade = 1.0 - smoothstep(cell * 0.25, cell * 0.8, px); // a repeat under ~2 px: none
   diffuseColor.rgb *= 1.0 - uFabricGroove * (1.0 - fabricH) * fabricFade;
+  drapeH = drapeHeight(fp);
+  diffuseColor.rgb *= 1.0 - uDrapeDark * (1.0 - drapeH) * (1.0 - drapeH); // the valleys lie in their own shade
 }
 `;
 
 const NORMAL = /* glsl */ `
 #include <normal_fragment_maps>
-normal = fabricBump(-vViewPosition, normal, (fabricH - 0.5) * uFabricDepth * fabricFade, faceDirection);
+normal = fabricBump(-vViewPosition, normal, (fabricH - 0.5) * uFabricDepth * fabricFade + (drapeH - 0.5) * uDrape, faceDirection);
 `;
 
 /** Add the fabric to a clothes material (keeps any onBeforeCompile it had: install before lib/hairShadow.ts's). */

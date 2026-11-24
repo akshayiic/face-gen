@@ -44,10 +44,20 @@ varying vec3 vViewPos;
 uniform float uRampLen;
 uniform float uFrizz;
 uniform float uLashLen, uLashCurl; // lashes: × their length, and how far the tips curl (up on the upper lid, down below)
+uniform float uNatural; // head hair: roots sunk into the scalp and thin, tips of uneven length (1); anything else 0
+uniform float uTrunc; // … how much of a strand's length its tip may lose (the layers of a cut)
+uniform float uSink; // … how deep (m) a root starts under the skin
+varying float vRootD;
 
 vec4 fetchP(int s, int k) {
   int i = s * uPoints + k;
   return texelFetch(uPos, ivec2(i % uTexW, i / uTexW), 0);
+}
+// the strand at u (0 = root, 1 = tip) along its polyline: a shortened strand is the same line cut earlier
+vec4 sampleP(int s, float u) {
+  float f = clamp(u, 0.0, 1.0) * float(uPoints - 1);
+  int i0 = int(floor(f));
+  return mix(fetchP(s, i0), fetchP(s, min(i0 + 1, uPoints - 1)), f - float(i0));
 }
 float hash(float n) { return fract(sin(n) * 43758.5453123); }
 // a lash point (index k) longer or shorter from its root, and curled: the tip goes up and forward (down and forward below)
@@ -64,9 +74,20 @@ void main() {
   int s = gl_InstanceID % uStrands;
   int c = gl_InstanceID / uStrands;
   int k = int(aVert.x);
+  float id = float(s) * 7.13 + float(c) * 131.71;
   vec4 P = fetchP(s, k);
   vec3 a = fetchP(s, max(k - 1, 0)).xyz;
   vec3 b = fetchP(s, min(k + 1, uPoints - 1)).xyz;
+  if (uTrunc > 0.0) {
+    // hair is cut in layers and its ends differ: each child strand stops a different way along its parent's line (the
+    // parents mostly keep the silhouette). The ribbon is laid again over the shorter strand, so it still tapers to a point.
+    float span = clamp(distance(fetchP(s, uPoints - 1).xyz, fetchP(s, 0).xyz) / 0.12, 0.25, 1.0); // short hair loses less
+    float tEnd = 1.0 - uTrunc * span * (c > 0 ? pow(hash(id + 41.0), 1.5) : 0.2 * hash(id + 41.0));
+    float u = float(k) / float(uPoints - 1), du = 1.0 / float(uPoints - 1);
+    P = sampleP(s, u * tEnd);
+    a = sampleP(s, max(u - du, 0.0) * tEnd).xyz;
+    b = sampleP(s, min(u + du, 1.0) * tEnd).xyz;
+  }
   vec4 rootT = texelFetch(uRoot, ivec2(s % uTexW, s / uTexW), 0); // xyz: the root's offset; w: lashes' shape turn
   vec3 off = rootT.xyz;
   if (uShapeFollow > 0.5) {
@@ -109,7 +130,6 @@ void main() {
   vec3 T = normalize(b - a + vec3(1e-7));
   float t = float(k) / float(uPoints - 1);
   vec3 pos = P.xyz + off;
-  float id = float(s) * 7.13 + float(c) * 131.71;
   if (c > 0) {
     // a child strand: around its parent, closer towards the tip (clumping), with its own slow wobble
     vec3 ref = normalize(P.xyz - uCentre);
@@ -132,10 +152,16 @@ void main() {
     // a few flyaways (they read as dark pen lines against the backdrop when there are many)
     if (hash(id + 19.0) < 0.03 * uFrizz) pos += out2 * uFrizz * 0.018 * fl * fl * (0.4 + hash(id + 23.0));
   }
+  if (uNatural > 0.5 && k < 2) {
+    // the root starts under the skin, a different depth for every strand: the skin hides the first stretch, so the hairline
+    // is ragged and each strand comes out of the scalp at its own point, instead of starting on it
+    float sink = uSink * (0.35 + 1.1 * hash(float(s) * 1.37 + 4.1)) * (k == 0 ? 1.0 : 0.3);
+    pos -= normalize(P.xyz - uCentre) * sink;
+  }
   vec4 mv = modelViewMatrix * vec4(pos, 1.0);
   vec3 tv = normalize((modelViewMatrix * vec4(T, 0.0)).xyz);
   vec3 side = normalize(cross(tv, normalize(-mv.xyz)));
-  float want = uWidth * mix(1.0, uTipW, t);
+  float want = uWidth * mix(1.0, uTipW, t) * mix(1.0, mix(0.5, 1.0, smoothstep(0.0, 0.1, t)), uNatural); // a root is finer than its strand
   float w = max(want, uMinPx * (-mv.z) * uPxScale);
   vCover = max(want / w, uCoverMin);
   mv.xyz += side * (0.5 * w * aVert.y);
@@ -148,7 +174,14 @@ void main() {
   vLock = hash(float(s) * 3.71 + 0.5); // one value per lock: the parent and all its children
   // a child strand fades in over its first few points (each its own distance): the hairline thins out into baby hairs
   // instead of ending in a hard edge where the roots stop
+  vRootD = distance(P.xyz, fetchP(s, 0).xyz);
   vRootFade = c > 0 ? smoothstep(0.0, 0.16, t - 0.05 * hash(id + 31.0)) : 1.0;
+  if (uNatural > 0.5) {
+    // each hair thickens from nothing over its own first few millimetres (up to ~2 cm): along the hairline single hairs
+    // come out of the skin and the edge thins into baby hairs; under the hair it is hidden anyway. (alpha = 0.2 + 0.8 × this)
+    float fl = 0.003 + 0.017 * hash(id + 57.0);
+    vRootFade = (smoothstep(0.0, fl, vRootD) - 0.2) / 0.8;
+  }
   vTan = tv;
   vViewPos = mv.xyz;
 }
@@ -165,7 +198,8 @@ uniform vec3 uSky;
 uniform vec3 uGround;
 uniform vec3 uUpView;
 uniform float uDiffuse, uSpec1, uSpec2, uShift1, uShift2, uExp1, uExp2, uJitter, uShadowFloor, uTipFade, uTipSpec, uRampAmount;
-uniform float uShine, uTT, uGlint, uSheenTint, uLock;
+uniform float uShine, uTT, uGlint, uSheenTint, uLock, uRootDark;
+varying float vRootD;
 varying float vT;
 varying float vRamp;
 varying float vLong;
@@ -193,6 +227,7 @@ void main() {
   vec3 V = normalize(-vViewPos);
   vec3 N = normalize(V - T * dot(V, T));
   float shade = mix(uShadowFloor, 1.0, vShade) * mix(1.0, 0.7 + 0.5 * vLock, uLock); // locks: some darker, some lit
+  shade *= mix(1.0 - uRootDark, 1.0, smoothstep(0.0, 0.035, vRootD)); // the roots lie in the scalp's shadow: the hair has depth
   vec3 colour = albedo * mix(uGround, uSky, 0.5 + 0.5 * dot(N, uUpView)) * shade;
   // glints: the secondary highlight sparkles along the strand (its scales catch the light unevenly)
   float glint = mix(1.0, 0.35 + 1.3 * fract(sin(floor(vT * 36.0 + vRand * 91.0) * 12.9898) * 43758.5453), uGlint);

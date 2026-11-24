@@ -97,6 +97,10 @@ export const GROOM = {
   tt: 0.35, // light through backlit strands (× the light, the hair colour); brows and lashes get a third
   glint: 0.6, // how unevenly the secondary highlight sparkles along a strand (0 = an even sheen)
   sheenTint: 0.7, // how blue-white the highlights of dark hair are (0 = plain white); light hair's stay neutral
+  // Head hair only: it grows OUT of the scalp and is cut, not moulded.
+  rootSinkMm: 2.0, // roots start this deep under the skin (× 0.35–1.45 per strand): a ragged hairline, strands emerging one by one
+  tipLoss: 0.2, // a child strand may stop up to this much of its length early (layers; the ends do not make one cut line)
+  rootDark: 0.5, // how much darker the hair is at the scalp (it lies in the scalp's shadow)
 };
 
 /** The skin's radius round the head centre (lib/hairShape.ts), for the skin registration it was made from. */
@@ -332,6 +336,10 @@ export async function buildGroom(
         uShine: { value: 1 },
         uLashLen: { value: 1 },
         uLashCurl: { value: 0 },
+        uNatural: { value: tintScalp ? 1 : 0 },
+        uTrunc: { value: tintScalp ? GROOM.tipLoss : 0 },
+        uSink: { value: GROOM.rootSinkMm / 1000 },
+        uRootDark: { value: tintScalp ? GROOM.rootDark : 0 },
         uSheenTint: { value: GROOM.sheenTint },
         uTT: { value: GROOM.tt * (fine || soft ? 0.33 : 1) },
         uGlint: { value: GROOM.glint },
@@ -478,7 +486,7 @@ export async function buildGroom(
  * Per skin vertex 0..1: how densely hair roots grow within `radius` (head space), soft-edged; hair shorter than
  * GROOM.scalpFullLength counts less (`reach`: root → tip distance per root, optional). Null before the head loads.
  */
-function coverFromRoots(roots: Float32Array, reach: Float32Array | null, radius = 0.008, full = 2): Float32Array | null {
+function coverFromRoots(roots: Float32Array, reach: Float32Array | null, radius = 0.014, full = 4): Float32Array | null {
   const shape = skinShape();
   if (!shape) return null;
   const rest = shape.rest;

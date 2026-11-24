@@ -550,6 +550,22 @@ function torsoRadius(theta: number, s: ClothesState, grow: number, narrow = 0): 
   return lo;
 }
 
+/**
+ * Soft folds in the cloth (m): the radial offset at angle θ round the axis and height y. Long, gentle waves that drift with
+ * height (cloth hangs and drags), with a finer set across them. Small: the garment still follows the body.
+ */
+function wrinkle(theta: number, y: number): number {
+  return 0.0012 * Math.sin(theta * 15 + 3 * Math.sin(y * 19 + 1.3) + 0.7) + 0.0007 * Math.sin(theta * 37 + y * 52 + 2.2) + 0.0005 * Math.sin(theta * 9 - y * 31);
+}
+
+/**
+ * How lit the cloth is by its height: the key light is above, and the chin, the hair and the shoulders shade the chest, so
+ * the garment falls into shadow down the body (a flat, evenly lit garment reads as a paper cut-out). 1 at the shoulders.
+ */
+function bodyShade(y: number): number {
+  return 0.66 + 0.34 * smooth((y + 0.19) / 0.17);
+}
+
 /** One garment layer as a grid: `columns` directions round the axis × `rows` points from its neckline down. */
 function garment(name: string, probe: Probe, s: ClothesState, cut: Cut, inner: boolean): Layer {
   const N = CLOTHES.columns, M = CLOTHES.rows;
@@ -613,10 +629,12 @@ function garment(name: string, probe: Probe, s: ClothesState, cut: Cut, inner: b
       // a rolled rim peaks at the edge and eases away
       rr += cut.roll * where * Math.sqrt(inBand);
       if (cut.collar) rr += cut.collar.roll * (1 - where) * Math.sqrt(Math.max(0, 1 - d / cut.collar.band));
+      // the cloth hangs in soft folds, not as a moulded shell: from just below the neckline, where it stops hugging the skin
+      rr += wrinkle(theta, yy) * smooth((d - 0.025) / 0.06);
       // a soft shadow where a collar folds over (at the band's lower edge)
       const crease = where * Math.exp(-(((d - cut.band) / 0.006) ** 2)) * 0.35;
       const edge = Math.exp(-((d / 0.004) ** 2)) * 0.12; // the edge itself catches a little less light
-      const shade = 1 - Math.min(0.5, crease + edge);
+      const shade = bodyShade(yy) * (1 - Math.min(0.5, crease + edge));
       const o = (i * M + j) * 3;
       position[o] = dx * rr;
       position[o + 1] = yy;
@@ -662,7 +680,7 @@ function outlineAt(pts: [number, number][], y: number): number {
  * down, a touch narrower at the bottom. They overlap the body, so where they meet is the armhole's seam (shaded).
  */
 function sleevesFor(probe: Probe, s: ClothesState, cut: Cut, cx: number, R: number): Layer {
-  const ring = 32, dome = 9, down = 26;
+  const ring = 40, dome = 9, down = 48;
   const rows = dome + down + 1;
   const Rz = R * 1.12, cz = CLOTHES.shoulders.centreZ;
   const power = 3; // 2 = an ellipse, higher = squarer
@@ -694,16 +712,21 @@ function sleevesFor(probe: Probe, s: ClothesState, cut: Cut, cx: number, R: numb
       for (let k = 0; k < ring; k++) {
         const a = (k / ring) * Math.PI * 2;
         const ca = Math.cos(a), sa = Math.sin(a);
-        const across = R * rho * sgn(ca) * Math.abs(ca) ** (2 / power); // sideways offset from the arm's axis (+X)
+        const ux = sgn(ca) * Math.abs(ca) ** (2 / power), uz = sgn(sa) * Math.abs(sa) ** (2 / power);
+        // cloth gathers on an arm: creases running down it, drifting round with height, and a few across it at the elbow
+        const fold = 0.0016 * Math.sin(a * 5 + 2.2 * Math.sin(y * 14 + side)) + 0.001 * Math.sin(a * 9 + y * 38 + side * 2);
+        const bend = 0.0013 * Math.sin(y * 150) * Math.exp(-(((y + 0.2) / 0.05) ** 2)); // the elbow's rings
+        const g = (fold + bend) * Math.min(1, j / dome);
+        const across = R * rho * ux + g * ux; // sideways offset from the arm's axis (+X)
         position.push(
           side * cx + drift + across,
           y - slope * side * across * tilt,
-          cz + Rz * rho * sgn(sa) * Math.abs(sa) ** (2 / power),
+          cz + Rz * rho * uz + g * uz,
         );
         // the seam where the arm meets the body: the inner side, strongest at the sleeve head
         const inward = Math.max(0, -side * ca) ** 2;
         const front = Math.max(0, sa) * 0.5 + 0.5;
-        const shade = 1 - 0.32 * inward * front - 0.1 * Math.exp(-(((j - dome) / 3) ** 2)) * inward;
+        const shade = bodyShade(y) * (1 - 0.2 * inward * front - 0.08 * Math.exp(-(((j - dome) / 3) ** 2)) * inward);
         colour.push(shade, shade, shade);
         uv.push(k / ring, top - y);
       }
@@ -760,10 +783,10 @@ function lapelsFor(probe: Probe, s: ClothesState, cut: Cut, g: { button: number;
     }
     return (lo + hi) / 2;
   };
-  const W = 0.07; // how wide it is at the notch (lateral, m)
+  const W = 0.058; // how wide it is at the notch (lateral, m)
   const yb = g.button + 0.012;
   const yn = g.join - 0.004; // the gorge: where the collar's seam meets it
-  const yp = g.join + 0.014; // the peak
+  const yp = g.join + 0.005; // the peak (any higher and it stands off the shoulder: there is no jacket to lie on above the collar's line)
   const rows = 30, cols = 12;
   const position: number[] = [], colour: number[] = [], uv: number[] = [], index: number[] = [];
   let base = 0;
@@ -782,15 +805,18 @@ function lapelsFor(probe: Probe, s: ClothesState, cut: Cut, g: { button: number;
         const a = c / cols;
         const x = innerX + (outerX - innerX) * a;
         const th = angleAtX(Math.max(x, 1e-4), y, 0);
-        const r = radius(th, y);
+        // on the jacket, never above its edge (the collar's line): where the edge is below the peak, the lapel ends on it
+        const yy = Math.min(y, cut.top(th) + 0.002);
+        const r = radius(th, yy);
         // lying proud of the jacket: the rolled inner edge stands a little higher
-        const off = 0.0065 + 0.0035 * (1 - a) ** 2;
+        // (the lapel is padded and rolls: it swells towards the fold and thins to the free edge, which lifts off the jacket)
+        const off = 0.0055 + 0.006 * Math.sin(Math.PI * Math.min(1, a * 0.9 + 0.1)) + 0.002 * a;
         const R = r + off;
-        position.push(side * Math.sin(th) * R, y, Math.cos(th) * R);
-        const roll = Math.exp(-((a / 0.07) ** 2)) * 0.22; // the fold
-        const rim = Math.exp(-(((1 - a) / 0.025) ** 2)) * 0.14; // the free edge
-        const stitch = Math.exp(-(((a - 0.9) / 0.018) ** 2)) * 0.16; // top-stitching
-        const shade = 1 - Math.min(0.45, roll + rim + stitch);
+        position.push(side * Math.sin(th) * R, yy, Math.cos(th) * R);
+        const roll = Math.exp(-((a / 0.1) ** 2)) * 0.3; // the fold
+        const rim = Math.exp(-(((1 - a) / 0.03) ** 2)) * 0.22; // the free edge, in its own shadow
+        const stitch = Math.exp(-(((a - 0.9) / 0.012) ** 2)) * 0.2; // top-stitching
+        const shade = bodyShade(y) * (1 - Math.min(0.45, roll + rim + stitch));
         colour.push(shade, shade, shade);
         uv.push((side * th + Math.PI) / (2 * Math.PI), cut.top(th) - y);
       }
